@@ -3,6 +3,8 @@ import { redirect } from 'next/navigation';
 import { Plus, ArrowUpRight, Inbox, Headphones, Clock3, MoveRight } from 'lucide-react';
 import { requireUser } from '@/lib/auth';
 import { db } from '@/lib/db';
+import { APP_TIMEZONE } from '@/lib/config';
+import { resolvePeriod } from '@/lib/period';
 import { listTickets } from '@/lib/services';
 import { TicketList } from '@/components/tickets';
 export default async function HomePage() {
@@ -10,17 +12,23 @@ export default async function HomePage() {
   if (user.role === 'GESTOR') redirect('/gestor');
   const employee = user.role === 'FUNCIONARIO';
   const { tickets } = await listTickets(user.id, employee ? 'todos' : 'meus');
+  const today = resolvePeriod({ periodo: 'hoje' });
   const counts = employee
     ? null
     : await Promise.all([
         db.ticket.count({ where: { status: 'NOVO' } }),
+        db.ticket.count({ where: { assigneeId: user.id, status: 'EM_ATENDIMENTO' } }),
+        db.ticket.count({ where: { assigneeId: user.id, status: 'AGUARDANDO' } }),
         db.ticket.count({
           where: {
-            status: { not: 'RESOLVIDO' },
-            OR: [{ assigneeId: user.id }, { participants: { some: { userId: user.id } } }],
+            assigneeId: user.id,
+            status: 'RESOLVIDO',
+            resolvedAt: { gte: today.start, lt: today.end },
           },
         }),
-        db.ticket.count({ where: { status: 'AGUARDANDO' } }),
+        db.ticket.count({
+          where: { status: { not: 'RESOLVIDO' }, participants: { some: { userId: user.id } } },
+        }),
       ]);
   return (
     <>
@@ -43,7 +51,7 @@ export default async function HomePage() {
           {new Intl.DateTimeFormat('pt-BR', {
             day: 'numeric',
             month: 'long',
-            timeZone: 'America/Sao_Paulo',
+            timeZone: APP_TIMEZONE,
           }).format(new Date())}
         </span>
       </div>
@@ -74,7 +82,7 @@ export default async function HomePage() {
         </div>
       </section>
       {counts && (
-        <section className="stats" aria-label="Resumo dos atendimentos">
+        <section className="stats operational-stats" aria-label="Resumo dos atendimentos">
           {[
             {
               label: 'Novos na fila',
@@ -85,20 +93,36 @@ export default async function HomePage() {
               color: 'blue',
             },
             {
-              label: 'Meus atendimentos',
+              label: 'Meus em atendimento',
               count: counts[1],
-              href: '/chamados?filtro=meus',
+              href: '/chamados?filtro=atendimento',
               icon: Headphones,
-              text: 'Responsável ou apoio',
+              text: 'Responsável principal',
               color: 'green',
             },
             {
-              label: 'Aguardando',
+              label: 'Meus aguardando',
               count: counts[2],
-              href: '/chamados?filtro=aguardando',
+              href: '/chamados?filtro=minha-espera',
               icon: Clock3,
               text: 'Acompanhe o próximo passo',
               color: 'amber',
+            },
+            {
+              label: 'Resolvidos hoje',
+              count: counts[3],
+              href: '/chamados?filtro=resolvidos-hoje',
+              icon: Headphones,
+              text: 'Como responsável final',
+              color: 'green',
+            },
+            {
+              label: 'Estou como apoio',
+              count: counts[4],
+              href: '/chamados?filtro=apoio',
+              icon: Headphones,
+              text: 'Chamados ainda abertos',
+              color: 'blue',
             },
           ].map((item) => (
             <Link key={item.label} href={item.href} className="stat-card">

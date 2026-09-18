@@ -55,9 +55,14 @@ export function Shell({
               <Users size={19} /> Usuários
             </Link>
           )}
-          {user.role === 'GESTOR' && (
+          {['GESTOR', 'ADMIN'].includes(user.role) && (
             <Link href="/gestor">
               <ChartNoAxesCombined size={19} /> Indicadores
+            </Link>
+          )}
+          {user.role === 'ADMIN' && (
+            <Link href="/admin/categorias">
+              <ListTodo size={19} /> Categorias
             </Link>
           )}
         </nav>
@@ -68,7 +73,7 @@ export function Shell({
         )}
         <div className="sidebar-bottom">
           <span className="connection-dot" /> Ambiente interno
-          <span className="version">VERSÃO 1.0</span>
+          <span className="version">VERSÃO 1.1</span>
         </div>
       </aside>
       <div className="workspace">
@@ -104,7 +109,7 @@ export function Shell({
           {user.role !== 'GESTOR' && <Link href="/chamados">Chamados</Link>}
           {tech && <Link href="/atendimento-rapido">+ Rápido</Link>}
           {user.role === 'ADMIN' && <Link href="/admin/usuarios">Usuários</Link>}
-          {user.role === 'GESTOR' && <Link href="/gestor">Indicadores</Link>}
+          {['GESTOR', 'ADMIN'].includes(user.role) && <Link href="/gestor">Indicadores</Link>}
         </nav>
         <main id="main" className="main-content">
           {children}

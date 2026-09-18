@@ -143,6 +143,12 @@ export async function ticketAction(_: FormState, form: FormData): Promise<FormSt
     const user = await requireUser();
     const id = value(form, 'ticketId');
     switch (value(form, 'intent')) {
+      case 'classify':
+        await service.classifyTicket(user.id, id, {
+          categoryId: value(form, 'categoryId') || null,
+          complexity: value(form, 'complexity') || null,
+        });
+        break;
       case 'claim':
         await service.claimTicket(user.id, id);
         break;
@@ -170,6 +176,21 @@ export async function ticketAction(_: FormState, form: FormData): Promise<FormSt
     }
     revalidatePath('/', 'layout');
     return { success: 'Atualização registrada.' };
+  } catch (error) {
+    return failure(error);
+  }
+}
+export async function categoryAction(_: FormState, form: FormData): Promise<FormState> {
+  try {
+    await sameOrigin();
+    const user = await requireUser(['ADMIN']);
+    await service.saveCategory(user.id, {
+      id: value(form, 'id') || undefined,
+      name: value(form, 'name'),
+      active: value(form, 'active') !== 'false',
+    });
+    revalidatePath('/', 'layout');
+    return { success: 'Categoria salva. Os vínculos históricos foram preservados.' };
   } catch (error) {
     return failure(error);
   }

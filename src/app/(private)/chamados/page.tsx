@@ -3,20 +3,46 @@ import { Plus } from 'lucide-react';
 import { requireUser } from '@/lib/auth';
 import { listTickets } from '@/lib/services';
 import { TicketList } from '@/components/tickets';
+import { Pagination } from '@/components/pagination';
 import { redirect } from 'next/navigation';
+import { db } from '@/lib/db';
+import { queryString, param, type SearchParams } from '@/lib/period';
+import { complexityLabels, impactLabels } from '@/lib/labels';
 export default async function TicketsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ filtro?: string; pagina?: string }>;
+  searchParams: Promise<SearchParams>;
 }) {
   const user = await requireUser();
   if (user.role === 'GESTOR') redirect('/gestor');
-  const params = await searchParams;
-  const employee = user.role === 'FUNCIONARIO';
-  const filter = ['novos', 'meus', 'aguardando'].includes(params.filtro || '')
-    ? params.filtro!
+  const params = await searchParams,
+    employee = user.role === 'FUNCIONARIO';
+  const filter = [
+    'novos',
+    'meus',
+    'aguardando',
+    'atendimento',
+    'minha-espera',
+    'resolvidos-hoje',
+    'apoio',
+  ].includes(param(params, 'filtro'))
+    ? param(params, 'filtro')
     : 'todos';
-  const { tickets, total, page } = await listTickets(user.id, filter, Number(params.pagina || 1));
+  const fields = Object.fromEntries(
+    ['categoryId', 'departmentId', 'impact', 'complexity', 'q'].map((k) => [k, param(params, k)]),
+  );
+  const { tickets, total, page } = await listTickets(
+    user.id,
+    filter,
+    Number(params.pagina || 1),
+    fields,
+  );
+  const options = employee
+    ? null
+    : await Promise.all([
+        db.category.findMany({ orderBy: { name: 'asc' }, select: { id: true, name: true } }),
+        db.department.findMany({ orderBy: { name: 'asc' }, select: { id: true, name: true } }),
+      ]);
   return (
     <>
       <div className="page-heading">
@@ -35,23 +61,93 @@ export default async function TicketsPage({
         </Link>
       </div>
       {!employee && (
-        <nav className="tabs" aria-label="Filtrar chamados">
-          {[
-            ['todos', 'Todos'],
-            ['novos', 'Novos na fila'],
-            ['meus', 'Meus atendimentos'],
-            ['aguardando', 'Aguardando'],
-          ].map(([key, label]) => (
-            <Link
-              key={key}
-              href={`/chamados?filtro=${key}`}
-              className={filter === key ? 'active' : ''}
-              aria-current={filter === key ? 'page' : undefined}
-            >
-              {label}
-            </Link>
-          ))}
-        </nav>
+        <>
+          <nav className="tabs" aria-label="Filtrar chamados">
+            {[
+              ['todos', 'Todos'],
+              ['novos', 'Novos na fila'],
+              ['meus', 'Meus atendimentos'],
+              ['aguardando', 'Aguardando'],
+            ].map(([key, label]) => (
+              <Link
+                key={key}
+                href={`/chamados?${queryString(params, { filtro: key, pagina: '' })}`}
+                className={filter === key ? 'active' : ''}
+                aria-current={filter === key ? 'page' : undefined}
+              >
+                {label}
+              </Link>
+            ))}
+          </nav>
+          <form className="panel queue-filters" method="get">
+            <input type="hidden" name="filtro" value={filter} />
+            <div className="field queue-search">
+              <label htmlFor="q">Buscar chamado</label>
+              <input
+                id="q"
+                name="q"
+                type="search"
+                maxLength={200}
+                placeholder="Número, solicitante ou descrição"
+                defaultValue={fields.q}
+              />
+            </div>
+            <div className="filter-grid">
+              <div className="field">
+                <label htmlFor="categoryId">Categoria</label>
+                <select id="categoryId" name="categoryId" defaultValue={fields.categoryId}>
+                  <option value="">Todas</option>
+                  <option value="none">Sem categoria</option>
+                  {options![0].map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="field">
+                <label htmlFor="departmentId">Setor</label>
+                <select id="departmentId" name="departmentId" defaultValue={fields.departmentId}>
+                  <option value="">Todos</option>
+                  {options![1].map((d) => (
+                    <option key={d.id} value={d.id}>
+                      {d.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="field">
+                <label htmlFor="impact">Impacto</label>
+                <select id="impact" name="impact" defaultValue={fields.impact}>
+                  <option value="">Todos</option>
+                  {Object.entries(impactLabels).map(([k, v]) => (
+                    <option key={k} value={k}>
+                      {v}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="field">
+                <label htmlFor="complexity">Complexidade</label>
+                <select id="complexity" name="complexity" defaultValue={fields.complexity}>
+                  <option value="">Todas</option>
+                  <option value="none">Não classificada</option>
+                  {Object.entries(complexityLabels).map(([k, v]) => (
+                    <option key={k} value={k}>
+                      {v}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            <div className="filter-actions">
+              <Link className="text-link" href="/chamados">
+                Limpar filtros
+              </Link>
+              <button className="button secondary">Filtrar fila</button>
+            </div>
+          </form>
+        </>
       )}
       <section className="panel list-panel">
         <div className="section-heading">
@@ -62,19 +158,7 @@ export default async function TicketsPage({
         </div>
         <TicketList tickets={tickets} employee={employee} />
       </section>
-      <nav className="pagination" aria-label="Paginação">
-        {page > 1 && (
-          <Link className="button secondary" href={`/chamados?filtro=${filter}&pagina=${page - 1}`}>
-            Anterior
-          </Link>
-        )}
-        <span>Página {page}</span>
-        {page * 20 < total && (
-          <Link className="button secondary" href={`/chamados?filtro=${filter}&pagina=${page + 1}`}>
-            Próxima
-          </Link>
-        )}
-      </nav>
+      <Pagination path="/chamados" params={params} page={page} total={total} />
     </>
   );
 }

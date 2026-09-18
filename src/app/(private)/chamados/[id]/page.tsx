@@ -15,6 +15,7 @@ import { db } from '@/lib/db';
 import { AppError } from '@/lib/errors';
 import { ticketAction } from '@/app/actions';
 import { ActionForm, Submit } from '@/components/form';
+import { Pagination } from '@/components/pagination';
 import { Status } from '@/components/tickets';
 import {
   formatDate,
@@ -23,6 +24,7 @@ import {
   waitingLabels,
   ticketNumber,
   statusLabels,
+  complexityLabels,
 } from '@/lib/labels';
 function Hidden({ id, intent }: { id: string; intent: string }) {
   return (
@@ -37,11 +39,14 @@ export default async function TicketPage({
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ criado?: string }>;
+  searchParams: Promise<{ criado?: string; eventos?: string; comentarios?: string }>;
 }) {
   const user = await requireUser();
   const { id } = await params;
-  const ticket = await getTicket(user.id, id).catch((error) => {
+  const search = await searchParams;
+  const eventsPage = Math.max(1, Number(search.eventos) || 1),
+    commentsPage = Math.max(1, Number(search.comentarios) || 1);
+  const ticket = await getTicket(user.id, id, eventsPage, commentsPage).catch((error) => {
     if (error instanceof AppError && error.status === 404) notFound();
     throw error;
   });
@@ -56,7 +61,15 @@ export default async function TicketPage({
       })
     : [];
   const available = technicians.filter((t) => !ticket.participants.some((p) => p.userId === t.id));
-  const created = (await searchParams).criado;
+  const created = search.criado;
+  const categories = tech
+    ? await db.category.findMany({
+        where: {
+          OR: [{ active: true }, ...(ticket.categoryId ? [{ id: ticket.categoryId }] : [])],
+        },
+        orderBy: { name: 'asc' },
+      })
+    : [];
   return (
     <>
       <Link href="/chamados" className="back-link">
@@ -123,7 +136,7 @@ export default async function TicketPage({
             <div className="section-title">
               <MessageSquareText size={19} />
               <h2>
-                Comentários <span className="count-pill">{ticket.comments.length}</span>
+                Comentários <span className="count-pill">{ticket._count.comments}</span>
               </h2>
             </div>
             <div className="comments">
@@ -145,6 +158,14 @@ export default async function TicketPage({
                 </p>
               )}
             </div>
+            <Pagination
+              path={`/chamados/${id}`}
+              params={search}
+              page={commentsPage}
+              total={ticket._count.comments}
+              size={20}
+              keyName="comentarios"
+            />
             <ActionForm action={ticketAction}>
               <Hidden id={id} intent="comment" />
               <div className="field">
@@ -191,14 +212,82 @@ export default async function TicketPage({
                     {event.waitingReason && (
                       <p className="event-detail">{waitingLabels[event.waitingReason]}</p>
                     )}
+                    {event.type === 'CATEGORIA_ALTERADA' && (
+                      <p className="event-detail">
+                        {event.previousCategory?.name || 'Sem categoria'} →{' '}
+                        {event.nextCategory?.name || 'Sem categoria'}
+                      </p>
+                    )}
+                    {event.type === 'COMPLEXIDADE_ALTERADA' && (
+                      <p className="event-detail">
+                        {event.previousComplexity
+                          ? complexityLabels[event.previousComplexity]
+                          : 'Não classificada'}{' '}
+                        →{' '}
+                        {event.nextComplexity
+                          ? complexityLabels[event.nextComplexity]
+                          : 'Não classificada'}
+                      </p>
+                    )}
                     {event.note && <p className="event-note">{event.note}</p>}
                   </div>
                 </li>
               ))}
             </ol>
+            <Pagination
+              path={`/chamados/${id}`}
+              params={search}
+              page={eventsPage}
+              total={ticket._count.events}
+              size={30}
+              keyName="eventos"
+            />
           </section>
         </div>
         <aside className="detail-aside">
+          {tech && (
+            <section className="panel padded">
+              <h2>Classificação técnica</h2>
+              <p className="muted small">
+                Opcional. Não altera o impacto informado pelo solicitante.
+              </p>
+              <ActionForm action={ticketAction}>
+                <Hidden id={id} intent="classify" />
+                <div className="field">
+                  <label htmlFor="technical-category">Categoria técnica</label>
+                  <select
+                    id="technical-category"
+                    name="categoryId"
+                    defaultValue={ticket.categoryId || ''}
+                  >
+                    <option value="">Sem categoria</option>
+                    {categories.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name}
+                        {!c.active ? ' (inativa)' : ''}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="field">
+                  <label htmlFor="technical-complexity">Complexidade operacional</label>
+                  <select
+                    id="technical-complexity"
+                    name="complexity"
+                    defaultValue={ticket.complexity || ''}
+                  >
+                    <option value="">Não classificada</option>
+                    {Object.entries(complexityLabels).map(([key, label]) => (
+                      <option key={key} value={key}>
+                        {label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <Submit className="button secondary">Salvar classificação</Submit>
+              </ActionForm>
+            </section>
+          )}
           <section className="panel padded">
             <div className="section-title">
               <UserRound size={19} />
