@@ -36,6 +36,7 @@ export const eventLabels = {
   RESOLVIDO: 'Chamado resolvido',
   REABERTO: 'Chamado reaberto',
   CATEGORIA_ALTERADA: 'Categoria técnica alterada',
+  LOCALIZACAO_ALTERADA: 'Localização corrigida',
   COMPLEXIDADE_ALTERADA: 'Complexidade alterada',
 };
 export const formatDate = (date: Date) =>

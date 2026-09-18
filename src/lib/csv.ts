@@ -1,3 +1,4 @@
+import { organizationLabels as labels } from './organization-labels';
 import type { ExportRow } from './analytics-service';
 export function csvCell(value: unknown) {
   let text = value == null ? '' : value instanceof Date ? value.toISOString() : String(value);
@@ -7,6 +8,12 @@ export function csvCell(value: unknown) {
 export const csvHeader =
   [
     'Número',
+    labels.company,
+    'CNPJ',
+    labels.unit,
+    'Registrado por',
+    'Solicitante cadastrado',
+    'Nome informado manualmente',
     'Solicitante',
     'Setor',
     'Responsável atual/final',
@@ -28,6 +35,12 @@ export function csvRow(row: ExportRow) {
   return (
     [
       row.number,
+      row.company || labels.noCompany,
+      row.cnpj,
+      row.unit,
+      row.openedBy,
+      row.registeredRequester,
+      row.manualRequester,
       row.requester,
       row.department,
       row.assignee,

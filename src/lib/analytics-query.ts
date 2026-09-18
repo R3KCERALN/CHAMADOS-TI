@@ -5,6 +5,8 @@ export function analyticsFilters(input: SearchParams, now = new Date()) {
   const period = resolvePeriod(input, now);
   const dimensions = z
     .object({
+      company: z.string().max(100).optional(),
+      unit: z.string().max(100).optional(),
       department: z.string().max(100).optional(),
       technician: z.string().max(100).optional(),
       category: z.string().max(100).optional(),
@@ -13,10 +15,9 @@ export function analyticsFilters(input: SearchParams, now = new Date()) {
     })
     .parse(
       Object.fromEntries(
-        ['department', 'technician', 'category', 'complexity', 'status'].map((key) => [
-          key,
-          param(input, key) || undefined,
-        ]),
+        ['company', 'unit', 'department', 'technician', 'category', 'complexity', 'status'].map(
+          (key) => [key, param(input, key) || undefined],
+        ),
       ),
     );
   return { ...period, ...dimensions };
@@ -24,10 +25,21 @@ export function analyticsFilters(input: SearchParams, now = new Date()) {
 export type AnalyticsFilters = ReturnType<typeof analyticsFilters>;
 export function metricsCTE(
   f: AnalyticsFilters,
+  organizationId: string,
   team = false,
   exportPage?: { after: number; limit: number },
 ) {
-  const conditions: Prisma.Sql[] = [Prisma.sql`TRUE`];
+  const conditions: Prisma.Sql[] = [Prisma.sql`t."organizationId"=${organizationId}`];
+  if (f.company)
+    conditions.push(
+      f.company === 'none'
+        ? Prisma.sql`t."companyId" IS NULL`
+        : Prisma.sql`t."companyId"=${f.company}`,
+    );
+  if (f.unit)
+    conditions.push(
+      f.unit === 'none' ? Prisma.sql`t."unitId" IS NULL` : Prisma.sql`t."unitId"=${f.unit}`,
+    );
   if (f.department) conditions.push(Prisma.sql`t."departmentId" = ${f.department}`);
   if (f.technician && !team) conditions.push(Prisma.sql`t."assigneeId" = ${f.technician}`);
   if (f.category)
@@ -48,8 +60,11 @@ export function metricsCTE(
       ${f.end.toISOString()}::timestamptz AT TIME ZONE 'UTC' AS end_at,
       ${f.now.toISOString()}::timestamptz AT TIME ZONE 'UTC' AS now_at
   ), base AS MATERIALIZED (
-    SELECT t.*, u.name AS requester, d.name AS department, a.name AS assignee, c.name AS category
-    FROM "Ticket" t JOIN "User" u ON u.id=t."requesterId" JOIN "Department" d ON d.id=t."departmentId"
+    SELECT t.*, t."requesterName" AS requester, coalesce(d.name,'Sem setor') AS department, a.name AS assignee, c.name AS category,
+      co."displayName" AS company, co.cnpj, un.name AS unit, opener.name AS "openedBy", u.name AS "registeredRequester"
+    FROM "Ticket" t LEFT JOIN "User" u ON u.id=t."requesterId" LEFT JOIN "Department" d ON d.id=t."departmentId"
+    LEFT JOIN "Company" co ON co.id=t."companyId" LEFT JOIN "Unit" un ON un.id=t."unitId"
+    LEFT JOIN "User" opener ON opener.id=t."openedByUserId"
     LEFT JOIN "User" a ON a.id=t."assigneeId" LEFT JOIN "Category" c ON c.id=t."categoryId", p
     WHERE ${Prisma.join(conditions, ' AND ')} AND t."createdAt" <= p.now_at
       AND (t.status<>'RESOLVIDO' OR (t."createdAt"<p.end_at AND t."resolvedAt">=p.start_at))

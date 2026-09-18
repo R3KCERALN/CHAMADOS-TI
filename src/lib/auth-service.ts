@@ -1,6 +1,7 @@
 import { randomBytes, createHash } from 'node:crypto';
 import argon2 from 'argon2';
 import { db } from './db';
+import { APP_ORGANIZATION_ID } from './config';
 import { AppError } from './errors';
 import { passwordSchema, usernameSchema } from './validation';
 export const publicUserSelect = {
@@ -8,6 +9,10 @@ export const publicUserSelect = {
   name: true,
   username: true,
   departmentId: true,
+  organizationId: true,
+  organization: { select: { id: true, name: true, active: true } },
+  primaryCompanyId: true,
+  primaryUnitId: true,
   role: true,
   active: true,
   mustChangePassword: true,
@@ -25,7 +30,7 @@ export async function login(username: string, password: string) {
   const parsed = usernameSchema.safeParse(username);
   if (!parsed.success || password.length > 128)
     throw new AppError('Usuário ou senha inválidos.', 401);
-  const key = tokenHash(parsed.data);
+  const key = tokenHash(`${APP_ORGANIZATION_ID}:${parsed.data}`);
   const now = new Date();
   await db.loginThrottle.deleteMany({ where: { expiresAt: { lt: now } } });
   const windowEnd = new Date(Date.now() + 15 * 60 * 1000);
@@ -36,17 +41,28 @@ export async function login(username: string, password: string) {
   });
   if (throttle.attempts > 10)
     throw new AppError('Muitas tentativas. Aguarde 15 minutos e tente novamente.', 429);
-  const user = await db.user.findUnique({ where: { username: parsed.data } });
+  const user = await db.user.findFirst({
+    where: { username: parsed.data, organizationId: APP_ORGANIZATION_ID },
+    include: { organization: true },
+  });
   dummyHash ??= hashPassword(randomBytes(32).toString('hex'));
   const valid = await argon2.verify(user?.passwordHash ?? (await dummyHash), password);
-  if (!user?.active || !valid) throw new AppError('Usuário ou senha inválidos.', 401);
+  if (!user?.active || !user.organization.active || !valid)
+    throw new AppError('Usuário ou senha inválidos.', 401);
   const token = randomBytes(32).toString('base64url');
   const expiresAt = new Date(Date.now() + 8 * 60 * 60 * 1000);
   await db.$transaction(async (tx) => {
     // Serialize against account changes so deactivation/reset cannot leave a fresh valid session.
     await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${user.id} FOR UPDATE`;
-    const current = await tx.user.findUniqueOrThrow({ where: { id: user.id } });
-    if (!current.active || current.passwordHash !== user.passwordHash)
+    const current = await tx.user.findUniqueOrThrow({
+      where: { id: user.id },
+      include: { organization: true },
+    });
+    if (
+      !current.active ||
+      !current.organization.active ||
+      current.passwordHash !== user.passwordHash
+    )
       throw new AppError('Usuário ou senha inválidos.', 401);
     await tx.session.deleteMany({ where: { expiresAt: { lt: now } } });
     await tx.session.create({ data: { tokenHash: tokenHash(token), userId: user.id, expiresAt } });
@@ -60,7 +76,13 @@ export async function getSessionUser(token: string | undefined) {
     where: { tokenHash: tokenHash(token) },
     include: { user: { select: publicUserSelect } },
   });
-  return session && session.expiresAt > new Date() && session.user.active ? session.user : null;
+  return session &&
+    session.expiresAt > new Date() &&
+    session.user.active &&
+    session.user.organization.active &&
+    session.user.organizationId === APP_ORGANIZATION_ID
+    ? session.user
+    : null;
 }
 export async function logout(token: string | undefined) {
   if (token) await db.session.deleteMany({ where: { tokenHash: tokenHash(token) } });
@@ -71,9 +93,13 @@ export async function changePassword(userId: string, currentPassword: string, ne
   const hash = await hashPassword(newPassword);
   await db.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${userId} FOR UPDATE`;
-    const user = await tx.user.findUnique({ where: { id: userId } });
+    const user = await tx.user.findUnique({
+      where: { id: userId },
+      include: { organization: true },
+    });
     if (
       !user?.active ||
+      !user.organization.active ||
       currentPassword.length > 128 ||
       !(await argon2.verify(user.passwordHash, currentPassword))
     )

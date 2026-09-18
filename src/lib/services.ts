@@ -1,23 +1,19 @@
 import { z } from 'zod';
 import { resolvePeriod } from './period';
 import { db } from './db';
+import { actor } from './access';
+import { resolveLocation, validateUserLocations } from './organization-service';
 import { AppError } from './errors';
 import { hashPassword, publicUserSelect } from './auth-service';
 import { userSchema, ticketSchema, statusSchema, passwordSchema } from './validation';
 import type { Prisma, Role, Ticket } from '@/generated/prisma/client';
 type Tx = Prisma.TransactionClient;
 const techRoles: Role[] = ['TI', 'ADMIN'];
-export async function actor(tx: Tx, id: string, roles?: Role[]) {
-  const user = await tx.user.findUnique({ where: { id }, select: publicUserSelect });
-  if (!user?.active || user.mustChangePassword)
-    throw new AppError('Sua sessão não permite esta operação. Entre novamente.', 401);
-  if (roles && !roles.includes(user.role))
-    throw new AppError('Você não tem permissão para esta operação.', 403);
-  return user;
-}
+export { actor } from './access';
 export async function adminUsers(actorId: string) {
-  await actor(db, actorId, ['ADMIN']);
+  const admin = await actor(db, actorId, ['ADMIN']);
   return db.user.findMany({
+    where: { organizationId: admin.organizationId },
     select: { ...publicUserSelect, createdAt: true, department: { select: { name: true } } },
     orderBy: { name: 'asc' },
   });
@@ -27,13 +23,21 @@ export async function createUser(actorId: string, input: unknown) {
   await actor(db, actorId, ['ADMIN']);
   const passwordHash = await hashPassword(data.password);
   return db.$transaction(async (tx) => {
-    await actor(tx, actorId, ['ADMIN']);
+    const admin = await actor(tx, actorId, ['ADMIN']);
     const department = await tx.department.findFirst({
-      where: { id: data.departmentId, active: true },
+      where: { id: data.departmentId, active: true, organizationId: admin.organizationId },
     });
     if (!department) throw new AppError('Setor inválido.');
+    const locations = await validateUserLocations(tx, admin.organizationId, data);
     const user = await tx.user.create({
       data: {
+        organizationId: admin.organizationId,
+        primaryCompanyId: locations.primaryCompanyId,
+        primaryUnitId: locations.primaryUnitId,
+        companyAccess: {
+          create: locations.additionalCompanyIds.map((companyId) => ({ companyId })),
+        },
+        unitAccess: { create: locations.additionalUnitIds.map((unitId) => ({ unitId })) },
         name: data.name,
         username: data.username,
         departmentId: data.departmentId,
@@ -58,19 +62,67 @@ export async function updateUser(actorId: string, userId: string, input: unknown
   return db.$transaction(async (tx) => {
     // All admin account mutations use the same lock: concurrent demotions cannot remove every admin.
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(817214)`;
-    await actor(tx, actorId, ['ADMIN']);
+    const admin = await actor(tx, actorId, ['ADMIN']);
     await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${userId} FOR UPDATE`;
     const before = await tx.user.findUnique({ where: { id: userId } });
-    if (!before) throw new AppError('Usuário não encontrado.', 404);
+    if (!before || before.organizationId !== admin.organizationId)
+      throw new AppError('Usuário não encontrado.', 404);
     if (actorId === userId && (!data.active || data.role !== 'ADMIN'))
       throw new AppError('Você não pode desativar ou remover seu próprio acesso de administrador.');
     if (before.role === 'ADMIN' && before.active && (!data.active || data.role !== 'ADMIN')) {
-      if ((await tx.user.count({ where: { role: 'ADMIN', active: true } })) <= 1)
+      if (
+        (await tx.user.count({
+          where: { role: 'ADMIN', active: true, organizationId: admin.organizationId },
+        })) <= 1
+      )
         throw new AppError('Mantenha pelo menos um administrador ativo.');
     }
-    if (!(await tx.department.findFirst({ where: { id: data.departmentId, active: true } })))
+    if (
+      !(await tx.department.findFirst({
+        where: { id: data.departmentId, active: true, organizationId: admin.organizationId },
+      }))
+    )
       throw new AppError('Setor inválido.');
-    const user = await tx.user.update({ where: { id: userId }, data, select: publicUserSelect });
+    const { additionalCompanyIds, additionalUnitIds, ...fields } = data;
+    const existingCompanies = await tx.userCompanyAccess.findMany({ where: { userId } });
+    const existingUnits = await tx.userUnitAccess.findMany({ where: { userId } });
+    const locations = await validateUserLocations(
+      tx,
+      admin.organizationId,
+      {
+        ...fields,
+        primaryCompanyId:
+          fields.primaryCompanyId === undefined ? before.primaryCompanyId : fields.primaryCompanyId,
+        primaryUnitId:
+          fields.primaryUnitId === undefined ? before.primaryUnitId : fields.primaryUnitId,
+        additionalCompanyIds: additionalCompanyIds ?? existingCompanies.map((a) => a.companyId),
+        additionalUnitIds: additionalUnitIds ?? existingUnits.map((a) => a.unitId),
+      },
+      {
+        companyIds: [before.primaryCompanyId, ...existingCompanies.map((a) => a.companyId)].filter(
+          (id): id is string => !!id,
+        ),
+        unitIds: [before.primaryUnitId, ...existingUnits.map((a) => a.unitId)].filter(
+          (id): id is string => !!id,
+        ),
+        allowMissingCompany: !data.active && !before.primaryCompanyId,
+      },
+    );
+    await tx.userCompanyAccess.deleteMany({ where: { userId } });
+    await tx.userUnitAccess.deleteMany({ where: { userId } });
+    const user = await tx.user.update({
+      where: { id: userId },
+      data: {
+        ...fields,
+        primaryCompanyId: locations.primaryCompanyId,
+        primaryUnitId: locations.primaryUnitId,
+        companyAccess: {
+          create: locations.additionalCompanyIds.map((companyId) => ({ companyId })),
+        },
+        unitAccess: { create: locations.additionalUnitIds.map((unitId) => ({ unitId })) },
+      },
+      select: publicUserSelect,
+    });
     await tx.session.deleteMany({ where: { userId } });
     await tx.userAudit.create({
       data: {
@@ -96,8 +148,10 @@ export async function resetPassword(actorId: string, userId: string, password: s
   await actor(db, actorId, ['ADMIN']);
   const passwordHash = await hashPassword(password);
   await db.$transaction(async (tx) => {
-    await actor(tx, actorId, ['ADMIN']);
+    const admin = await actor(tx, actorId, ['ADMIN']);
     await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${userId} FOR UPDATE`;
+    if (!(await tx.user.findFirst({ where: { id: userId, organizationId: admin.organizationId } })))
+      throw new AppError('Usuário não encontrado.', 404);
     await tx.user.update({
       where: { id: userId },
       data: { passwordHash, mustChangePassword: true },
@@ -109,21 +163,38 @@ export async function resetPassword(actorId: string, userId: string, password: s
 export async function createTicket(actorId: string, input: unknown, requesterId?: string) {
   const data = ticketSchema.parse(input);
   return db.$transaction(async (tx) => {
-    const user = await actor(tx, actorId, requesterId ? techRoles : ['FUNCIONARIO', 'TI', 'ADMIN']);
+    const quick = !!requesterId || !!data.quick || !!data.requesterName;
+    const user = await actor(tx, actorId, quick ? techRoles : ['FUNCIONARIO', 'TI', 'ADMIN']);
     const requester = requesterId
       ? await tx.user.findFirst({
-          where: { id: requesterId, active: true },
+          where: { id: requesterId, active: true, organizationId: user.organizationId },
           select: publicUserSelect,
         })
-      : user;
-    if (!requester) throw new AppError('Selecione um funcionário ativo.');
-    const quick = !!requesterId;
+      : quick && data.requesterName
+        ? null
+        : user;
+    if (requesterId && !requester) throw new AppError('Selecione um funcionário ativo.');
+    if (quick && !requesterId && !data.requesterName)
+      throw new AppError('Selecione uma pessoa ou informe o nome.');
+    if (quick && !data.companyId && (!requester || !requester.primaryCompanyId))
+      throw new AppError('Selecione a filial do atendimento.');
+    const location = await resolveLocation(
+      tx,
+      user,
+      { ...data, unitId: requester ? data.unitId : data.unitId || null },
+      requester || undefined,
+    );
     const occurredAt = new Date();
     const ticket = await tx.ticket.create({
       data: {
-        ...data,
-        requesterId: requester.id,
-        departmentId: requester.departmentId,
+        description: data.description,
+        impact: data.impact,
+        organizationId: user.organizationId,
+        ...location,
+        openedByUserId: user.id,
+        requesterId: requester?.id || null,
+        requesterName: requester?.name || data.requesterName!,
+        departmentId: requester?.departmentId || null,
         origin: quick ? 'ATENDIMENTO_RAPIDO' : 'PORTAL',
         status: quick ? 'EM_ATENDIMENTO' : 'NOVO',
         assigneeId: quick ? actorId : null,
@@ -138,7 +209,7 @@ export async function createTicket(actorId: string, input: unknown, requesterId?
         type: 'CRIADO',
         createdAt: occurredAt,
         toStatus: ticket.status,
-        metadata: { origin: ticket.origin },
+        metadata: { origin: ticket.origin, requesterName: ticket.requesterName },
       },
     });
     if (quick)
@@ -174,9 +245,12 @@ export async function getTicket(
 ) {
   const user = await actor(db, actorId);
   const ticket = await db.ticket.findUnique({
-    where: { id: ticketId },
+    where: { id: ticketId, organizationId: user.organizationId },
     include: {
       requester: { select: { id: true, name: true } },
+      openedByUser: { select: { id: true, name: true } },
+      company: true,
+      unit: true,
       department: true,
       category: true,
       _count: { select: { events: true, comments: true } },
@@ -245,6 +319,8 @@ export async function listTickets(
     }
     const fields = z
       .object({
+        companyId: z.string().max(100).optional(),
+        unitId: z.string().max(100).optional(),
         categoryId: z.string().max(100).optional(),
         departmentId: z.string().max(100).optional(),
         impact: z.enum(['BLOQUEADO', 'PARCIAL', 'BAIXO']).optional(),
@@ -252,6 +328,8 @@ export async function listTickets(
         q: z.string().trim().max(200).optional(),
       })
       .parse(Object.fromEntries(Object.entries(input).filter(([, v]) => v)));
+    if (fields.companyId) where.companyId = fields.companyId === 'none' ? null : fields.companyId;
+    if (fields.unitId) where.unitId = fields.unitId === 'none' ? null : fields.unitId;
     if (fields.categoryId)
       where.categoryId = fields.categoryId === 'none' ? null : fields.categoryId;
     if (fields.departmentId) where.departmentId = fields.departmentId;
@@ -264,6 +342,7 @@ export async function listTickets(
         {
           OR: [
             { description: { contains: fields.q, mode: 'insensitive' } },
+            { requesterName: { contains: fields.q, mode: 'insensitive' } },
             { requester: { name: { contains: fields.q, mode: 'insensitive' } } },
             ...(Number.isSafeInteger(numeric) && numeric > 0 && numeric <= 2147483647
               ? [{ number: numeric }]
@@ -273,12 +352,15 @@ export async function listTickets(
       ];
     }
   }
+  where.organizationId = user.organizationId;
   const safePage = Math.max(1, Math.min(100000, Math.trunc(page) || 1));
   const [tickets, total] = await Promise.all([
     db.ticket.findMany({
       where,
       include: {
         requester: { select: { name: true } },
+        company: { select: { displayName: true } },
+        unit: { select: { name: true } },
         department: { select: { name: true } },
         category: { select: { name: true } },
         assignee: { select: { name: true } },
@@ -293,10 +375,15 @@ export async function listTickets(
 }
 export async function claimTicket(actorId: string, ticketId: string) {
   return db.$transaction(async (tx) => {
-    await actor(tx, actorId, techRoles);
+    const user = await actor(tx, actorId, techRoles);
     const occurredAt = new Date();
     const result = await tx.ticket.updateMany({
-      where: { id: ticketId, status: 'NOVO', assigneeId: null },
+      where: {
+        id: ticketId,
+        organizationId: user.organizationId,
+        status: 'NOVO',
+        assigneeId: null,
+      },
       data: { assigneeId: actorId, status: 'EM_ATENDIMENTO', startedAt: occurredAt },
     });
     if (result.count !== 1)
@@ -314,9 +401,9 @@ export async function claimTicket(actorId: string, ticketId: string) {
     });
   });
 }
-async function lockedTicket(tx: Tx, ticketId: string) {
-  await tx.$queryRaw`SELECT id FROM "Ticket" WHERE id = ${ticketId} FOR UPDATE`;
-  const ticket = await tx.ticket.findUnique({ where: { id: ticketId } });
+async function lockedTicket(tx: Tx, ticketId: string, organizationId: string) {
+  await tx.$queryRaw`SELECT id FROM "Ticket" WHERE id = ${ticketId} AND "organizationId" = ${organizationId} FOR UPDATE`;
+  const ticket = await tx.ticket.findFirst({ where: { id: ticketId, organizationId } });
   if (!ticket) throw new AppError('Chamado não encontrado.', 404);
   return ticket;
 }
@@ -324,7 +411,7 @@ export async function changeStatus(actorId: string, ticketId: string, input: unk
   const data = statusSchema.parse(input);
   return db.$transaction(async (tx) => {
     const user = await actor(tx, actorId, techRoles);
-    const ticket = await lockedTicket(tx, ticketId);
+    const ticket = await lockedTicket(tx, ticketId, user.organizationId);
     manages(user.role, user.id, ticket);
     const allowed =
       ticket.status === 'EM_ATENDIMENTO'
@@ -370,14 +457,18 @@ export async function changeStatus(actorId: string, ticketId: string, input: unk
 export async function setSupport(actorId: string, ticketId: string, userId: string, add: boolean) {
   return db.$transaction(async (tx) => {
     const user = await actor(tx, actorId, techRoles);
-    const ticket = await lockedTicket(tx, ticketId);
+    const ticket = await lockedTicket(tx, ticketId, user.organizationId);
     manages(user.role, user.id, ticket);
     if (!ticket.assigneeId || ticket.status === 'RESOLVIDO')
       throw new AppError('O chamado precisa estar em atendimento ou aguardando.');
     if (userId === ticket.assigneeId)
       throw new AppError('O responsável principal já participa do chamado.');
     if (add) {
-      if (!(await tx.user.findFirst({ where: { id: userId, role: 'TI', active: true } })))
+      if (
+        !(await tx.user.findFirst({
+          where: { id: userId, role: 'TI', active: true, organizationId: user.organizationId },
+        }))
+      )
         throw new AppError('Selecione um técnico ativo.');
       if (
         await tx.ticketParticipant.findUnique({ where: { ticketId_userId: { ticketId, userId } } })
@@ -401,11 +492,15 @@ export async function setSupport(actorId: string, ticketId: string, userId: stri
 export async function assignTicket(actorId: string, ticketId: string, userId: string) {
   return db.$transaction(async (tx) => {
     const user = await actor(tx, actorId, techRoles);
-    const ticket = await lockedTicket(tx, ticketId);
+    const ticket = await lockedTicket(tx, ticketId, user.organizationId);
     manages(user.role, actorId, ticket);
     if (!ticket.assigneeId || ticket.status === 'RESOLVIDO' || ticket.assigneeId === userId)
       throw new AppError('Não é possível transferir este chamado.');
-    if (!(await tx.user.findFirst({ where: { id: userId, active: true, role: 'TI' } })))
+    if (
+      !(await tx.user.findFirst({
+        where: { id: userId, active: true, role: 'TI', organizationId: user.organizationId },
+      }))
+    )
       throw new AppError('Selecione um técnico ativo.');
     const removed = await tx.ticketParticipant.deleteMany({ where: { ticketId, userId } });
     if (removed.count)
@@ -434,7 +529,7 @@ export async function addComment(actorId: string, ticketId: string, content: str
   const text = z.string().trim().min(1, 'Escreva um comentário.').max(3000).parse(content);
   return db.$transaction(async (tx) => {
     const user = await actor(tx, actorId);
-    const ticket = await lockedTicket(tx, ticketId);
+    const ticket = await lockedTicket(tx, ticketId, user.organizationId);
     visible(user.role, user.id, ticket);
     const comment = await tx.ticketComment.create({
       data: { ticketId, authorId: actorId, content: text },
@@ -455,13 +550,22 @@ export async function saveCategory(actorId: string, input: unknown) {
     })
     .parse(input);
   return db.$transaction(async (tx) => {
-    await actor(tx, actorId, ['ADMIN']);
+    const admin = await actor(tx, actorId, ['ADMIN']);
+    if (
+      data.id &&
+      !(await tx.category.findFirst({
+        where: { id: data.id, organizationId: admin.organizationId },
+      }))
+    )
+      throw new AppError('Categoria não encontrada.', 404);
     if (data.id)
       return tx.category.update({
         where: { id: data.id },
         data: { name: data.name, active: data.active },
       });
-    return tx.category.create({ data: { name: data.name, active: data.active } });
+    return tx.category.create({
+      data: { name: data.name, active: data.active, organizationId: admin.organizationId },
+    });
   });
 }
 export async function classifyTicket(actorId: string, ticketId: string, input: unknown) {
@@ -472,12 +576,14 @@ export async function classifyTicket(actorId: string, ticketId: string, input: u
     })
     .parse(input);
   return db.$transaction(async (tx) => {
-    await actor(tx, actorId, techRoles);
-    const ticket = await lockedTicket(tx, ticketId);
+    const user = await actor(tx, actorId, techRoles);
+    const ticket = await lockedTicket(tx, ticketId, user.organizationId);
     if (
       data.categoryId &&
       data.categoryId !== ticket.categoryId &&
-      !(await tx.category.findFirst({ where: { id: data.categoryId, active: true } }))
+      !(await tx.category.findFirst({
+        where: { id: data.categoryId, active: true, organizationId: user.organizationId },
+      }))
     )
       throw new AppError('Selecione uma categoria ativa.');
     if (data.categoryId !== ticket.categoryId)
@@ -501,5 +607,33 @@ export async function classifyTicket(actorId: string, ticketId: string, input: u
         },
       });
     return tx.ticket.update({ where: { id: ticketId }, data });
+  });
+}
+
+export async function relocateTicket(actorId: string, ticketId: string, input: unknown) {
+  const data = z
+    .object({
+      companyId: z.string().min(1).max(100),
+      unitId: z.string().max(100).nullable().optional(),
+    })
+    .parse(input);
+  return db.$transaction(async (tx) => {
+    const user = await actor(tx, actorId, techRoles);
+    const ticket = await lockedTicket(tx, ticketId, user.organizationId);
+    const location = await resolveLocation(tx, user, { ...data, unitId: data.unitId || null });
+    if (ticket.companyId === location.companyId && ticket.unitId === location.unitId) return;
+    await tx.ticket.update({ where: { id: ticketId }, data: location });
+    await tx.ticketEvent.create({
+      data: {
+        ticketId,
+        actorId,
+        type: 'LOCALIZACAO_ALTERADA',
+        metadata: {
+          previousCompanyId: ticket.companyId,
+          previousUnitId: ticket.unitId,
+          ...location,
+        },
+      },
+    });
   });
 }

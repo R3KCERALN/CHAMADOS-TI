@@ -47,6 +47,7 @@ enum EventType {
   REABERTO
   CATEGORIA_ALTERADA
   COMPLEXIDADE_ALTERADA
+  LOCALIZACAO_ALTERADA
 }
 enum Complexity {
   BAIXA
@@ -55,23 +56,31 @@ enum Complexity {
   CRITICA
 }
 model Category {
+  organizationId String
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
   id        String @id @default(cuid())
-  name      String @unique
+  name      String
   active    Boolean @default(true)
   createdAt DateTime @default(now())
   tickets   Ticket[]
   previousEvents TicketEvent[] @relation("PreviousCategory")
   nextEvents TicketEvent[] @relation("NextCategory")
+  @@unique([organizationId, name])
 }
 model Department {
+  organizationId String
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
   id        String   @id @default(cuid())
-  name      String   @unique
+  name      String
   active    Boolean  @default(true)
   createdAt DateTime @default(now())
   users     User[]
   tickets   Ticket[]
+  @@unique([organizationId, name])
 }
 model User {
+  organizationId String
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
   id                 String @id @default(cuid())
   name               String
   username           String @unique
@@ -83,6 +92,13 @@ model User {
   mustChangePassword Boolean @default(true)
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
+  primaryCompanyId String?
+  primaryCompany Company? @relation(fields: [primaryCompanyId], references: [id], onDelete: Restrict)
+  primaryUnitId String?
+  primaryUnit Unit? @relation(fields: [primaryUnitId], references: [id], onDelete: Restrict)
+  companyAccess UserCompanyAccess[]
+  unitAccess UserUnitAccess[]
+  openedTickets Ticket[] @relation("OpenedBy")
   sessions           Session[]
   requests           Ticket[] @relation("Requester")
   assignments        Ticket[] @relation("Assignee")
@@ -94,6 +110,9 @@ model User {
   auditSubjects      UserAudit[] @relation("AuditSubject")
   @@index([departmentId])
   @@index([role, active])
+  @@index([organizationId, role, active])
+  @@index([primaryCompanyId])
+  @@index([primaryUnitId])
 }
 model Session {
   id        String @id @default(cuid())
@@ -112,16 +131,25 @@ model LoginThrottle {
   @@index([expiresAt])
 }
 model Ticket {
+  organizationId String
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
   id              String @id @default(cuid())
   number          Int @unique @default(autoincrement())
   description     String
   impact          Impact
   status          TicketStatus @default(NOVO)
   origin          TicketOrigin @default(PORTAL)
-  requesterId     String
-  requester       User @relation("Requester", fields: [requesterId], references: [id], onDelete: Restrict)
-  departmentId    String
-  department      Department @relation(fields: [departmentId], references: [id], onDelete: Restrict)
+  companyId String?
+  company Company? @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  unitId String?
+  unit Unit? @relation(fields: [unitId], references: [id], onDelete: Restrict)
+  openedByUserId String?
+  openedByUser User? @relation("OpenedBy", fields: [openedByUserId], references: [id], onDelete: Restrict)
+  requesterName String
+  requesterId     String?
+  requester       User? @relation("Requester", fields: [requesterId], references: [id], onDelete: Restrict)
+  departmentId    String?
+  department      Department? @relation(fields: [departmentId], references: [id], onDelete: Restrict)
   assigneeId      String?
   assignee        User? @relation("Assignee", fields: [assigneeId], references: [id], onDelete: Restrict)
   waitingReason   WaitingReason?
@@ -136,6 +164,12 @@ model Ticket {
   participants    TicketParticipant[]
   events          TicketEvent[]
   comments        TicketComment[]
+  @@index([organizationId, createdAt])
+  @@index([organizationId, resolvedAt])
+  @@index([organizationId, status])
+  @@index([companyId, createdAt])
+  @@index([unitId, createdAt])
+  @@index([openedByUserId])
   @@index([requesterId, createdAt])
   @@index([status, createdAt])
   @@index([assigneeId, status])
@@ -209,4 +243,64 @@ model UserAudit {
   createdAt DateTime @default(now())
   @@index([actorId])
   @@index([subjectId, createdAt])
+}
+
+model Organization {
+  id String @id @default(cuid())
+  name String
+  active Boolean @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  users User[]
+  departments Department[]
+  categories Category[]
+  companies Company[]
+  tickets Ticket[]
+}
+model Company {
+  id String @id @default(cuid())
+  organizationId String
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  displayName String
+  legalName String?
+  cnpj String
+  active Boolean @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  units Unit[]
+  users User[]
+  access UserCompanyAccess[]
+  tickets Ticket[]
+  @@unique([organizationId, cnpj])
+  @@index([organizationId, active])
+}
+model Unit {
+  id String @id @default(cuid())
+  companyId String
+  company Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  name String
+  code String?
+  active Boolean @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  users User[]
+  access UserUnitAccess[]
+  tickets Ticket[]
+  @@unique([companyId, name])
+}
+model UserCompanyAccess {
+  userId String
+  companyId String
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
+  company Company @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  @@id([userId, companyId])
+  @@index([companyId])
+}
+model UserUnitAccess {
+  userId String
+  unitId String
+  user User @relation(fields: [userId], references: [id], onDelete: Restrict)
+  unit Unit @relation(fields: [unitId], references: [id], onDelete: Restrict)
+  @@id([userId, unitId])
+  @@index([unitId])
 }

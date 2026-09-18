@@ -1,10 +1,24 @@
 import 'dotenv/config';
+import { APP_ORGANIZATION_ID } from '../src/lib/config';
 import { db } from '../src/lib/db';
 import { hashPassword } from '../src/lib/auth-service';
 import { usernameSchema } from '../src/lib/validation';
 async function main() {
+  const organizationId = APP_ORGANIZATION_ID;
+  await db.organization.upsert({
+    where: { id: organizationId },
+    create: {
+      id: organizationId,
+      name: process.env.INITIAL_ORGANIZATION_NAME || 'Organização inicial',
+    },
+    update: {},
+  });
   for (const name of ['TI', 'Financeiro', 'RH', 'Comercial', 'Administrativo', 'Gerência']) {
-    await db.department.upsert({ where: { name }, create: { name }, update: {} });
+    await db.department.upsert({
+      where: { organizationId_name: { organizationId, name } },
+      create: { name, organizationId },
+      update: {},
+    });
   }
   for (const name of [
     'Acesso / Senha',
@@ -18,11 +32,15 @@ async function main() {
     'Solicitação de instalação',
     'Outro',
   ]) {
-    if (!(await db.category.findFirst({ where: { name: { equals: name, mode: 'insensitive' } } })))
-      await db.category.create({ data: { name } });
+    if (
+      !(await db.category.findFirst({
+        where: { organizationId, name: { equals: name, mode: 'insensitive' } },
+      }))
+    )
+      await db.category.create({ data: { name, organizationId } });
   }
   // Bootstrap only: never reset credentials or promote an existing account on repeat runs.
-  if (await db.user.count({ where: { role: 'ADMIN' } })) {
+  if (await db.user.count({ where: { role: 'ADMIN', organizationId } })) {
     console.log('Administrador já existente. Credenciais preservadas.');
     return;
   }
@@ -34,12 +52,15 @@ async function main() {
   if (!password || password.startsWith('SUBSTITUA'))
     throw new Error('Configure INITIAL_ADMIN_PASSWORD com uma senha forte.');
   const passwordHash = await hashPassword(password);
-  const department = await db.department.findUniqueOrThrow({ where: { name: 'TI' } });
+  const department = await db.department.findUniqueOrThrow({
+    where: { organizationId_name: { name: 'TI', organizationId } },
+  });
   await db.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(817214)`;
-    if (await tx.user.count({ where: { role: 'ADMIN' } })) return;
+    if (await tx.user.count({ where: { role: 'ADMIN', organizationId } })) return;
     await tx.user.create({
       data: {
+        organizationId,
         username,
         name,
         passwordHash,
