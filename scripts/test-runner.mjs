@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import { readdirSync } from 'node:fs';
 import { Client } from 'pg';
 import { spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
@@ -31,7 +32,18 @@ try {
   if (process.argv.includes('--e2e')) {
     run(['run', 'db:seed']);
     run(['exec', '--', 'playwright', 'test']);
-  } else run(['exec', '--', 'tsx', '--test', '--test-concurrency=1', 'tests/critical.test.ts']);
+  } else
+    run([
+      'exec',
+      '--',
+      'tsx',
+      '--test',
+      '--test-concurrency=1',
+      ...readdirSync('tests')
+        .filter((f) => f.endsWith('.test.ts'))
+        .sort()
+        .map((f) => `tests/${f}`),
+    ]);
 } catch (error) {
   console.error(error.message);
   process.exitCode = 1;

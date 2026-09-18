@@ -1,6 +1,6 @@
 # Central de Suporte
 
-V1 funcional de uma central interna de atendimento de TI. Monólito full-stack local: Next.js 16.3.5, React 19.3, TypeScript strict, Tailwind CSS 4, PostgreSQL 17 e Prisma 7.10. Sem autenticação externa, serviços pagos ou APIs de IA.
+V1.1 funcional de uma central interna de atendimento de TI, com operação, gestão e indicadores auditáveis. Monólito full-stack local: Next.js 16.3.5, React 19.3, TypeScript strict, Tailwind CSS 4, PostgreSQL 17 e Prisma 7.10. Sem autenticação externa, serviços pagos ou APIs de IA.
 
 ## Requisitos
 
@@ -31,9 +31,9 @@ Abra **http://localhost:3000**.
 
 O username local gerado é `admin`. Consulte **INITIAL_ADMIN_PASSWORD no seu `.env`** para a senha temporária; ela não é incluída no repositório nem impressa pelo seed. INITIAL_ADMIN_NAME define o nome inicial. O seed não redefine nem promove usuários existentes e pode ser executado novamente sem alterar credenciais.
 
-No primeiro login, crie uma senha pessoal de pelo menos 12 caracteres e entre novamente. Acesse **Usuários → Criar usuário** para cadastrar um funcionário e dois técnicos de TI. Compartilhe cada senha temporária diretamente com a pessoa. Todos devem trocar a senha no primeiro acesso. Não há contas públicas ou senhas de demonstração fixas.
+No primeiro login, crie uma senha pessoal de pelo menos 6 caracteres e entre novamente. Acesse **Usuários → Criar usuário** para cadastrar um funcionário e dois técnicos de TI. Compartilhe cada senha temporária diretamente com a pessoa. Todos devem trocar a senha no primeiro acesso. Não há contas públicas ou senhas de demonstração fixas.
 
-Os únicos dados iniciais são o ADMIN e os setores TI, Financeiro, RH, Comercial, Administrativo e Gerência. Esses nomes não fazem parte das regras de permissão.
+O bootstrap cria o ADMIN, os setores TI, Financeiro, RH, Comercial, Administrativo e Gerência e dez categorias técnicas iniciais. Esses nomes não fazem parte das regras de permissão. Categorias são administradas em **Categorias** e nunca são exigidas do funcionário.
 
 ### Executar o build de produção local
 
@@ -65,8 +65,8 @@ Migrations são aplicadas com `npm run db:migrate`. Para evoluir o schema em des
 | ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | FUNCIONARIO | Abre chamado com descrição/impacto, vê apenas os próprios, acompanha timeline e comenta.                                                                                                      |
 | TI          | Vê chamados e fila, assume novos, registra atendimento rápido, comenta. Responsável principal gerencia status, apoios e transferência. Apoios não recebem permissão de responsável principal. |
-| ADMIN       | Administra pessoas e senhas; tem acesso operacional completo para dar suporte e recuperar chamados de técnicos inativos.                                                                      |
-| GESTOR      | Autenticação e área reservada com indicação da próxima etapa. Sem indicadores inventados ou acesso à fila.                                                                                    |
+| ADMIN       | Administra pessoas, senhas e categorias; acesso operacional completo e indicadores gerenciais.                                                                                                |
+| GESTOR      | Panorama gerencial, equipe, detalhes e CSV. Sem acesso à fila ou ao detalhe operacional de chamados.                                                                                          |
 
 Fluxo: **NOVO → EM_ATENDIMENTO → AGUARDANDO → EM_ATENDIMENTO → RESOLVIDO**. Também é possível resolver diretamente de EM_ATENDIMENTO ou AGUARDANDO. Espera requer motivo; OUTRO exige detalhes. Reabertura está prevista no enum de auditoria, mas não é oferecida na V1.
 
@@ -74,15 +74,69 @@ Atendimento rápido: busque uma pessoa ativa, selecione, descreva e inicie. Impa
 
 Somente o ADMIN cria/edita usuários. A V1 utiliza exclusivamente desativação, mesmo para usuários sem histórico. Chamados antigos mantêm referências válidas. Alterações cadastrais encerram sessões existentes para aplicar permissões imediatamente. ADMIN não pode desativar ou rebaixar a própria conta. Outro ADMIN pode transferir atendimentos de técnicos desativados.
 
+## Atualizar uma instalação existente
+
+Preserve o `.env`, o volume e todas as migrations anteriores. Com a aplicação parada:
+
+```bash
+npm ci
+docker compose up -d --wait
+npm run db:generate
+npm run db:migrate
+npm run db:seed
+npm run build
+npm run start
+```
+
+A migration incremental **202609180004_management** adiciona categorias, complexidade opcional, colunas de auditoria e índices. Não recria tabelas existentes nem remove dados. Chamados antigos permanecem sem categoria/complexidade até classificação pelo TI. O seed é idempotente e não muda senhas existentes. **Nunca execute `prisma migrate reset` no banco de aplicação.**
+
+## Gestão e operação na V1.1
+
+- **Gestão — `/gestor`**: volumes de abertura/resolução, posição atual do backlog, média/mediana e amostra dos tempos, evolução, demanda por setor/categoria/complexidade, espera por motivo e dez pendências mais antigas.
+- **Equipe de TI — `/gestor/equipe`**: lista alfabética paginada, responsabilidade principal, resolução final, apoio histórico, carteira atual, complexidade e tempos de ciclo. Clique no nome para as distribuições e chamados do técnico.
+- **Categorias — `/admin/categorias`**: criar, renomear, ativar e desativar. Categorias inativas permanecem em históricos e relatórios.
+- **Chamado — `/chamados/[id]`**: TI/ADMIN classificam categoria e complexidade; cada alteração gera evento. Funcionários continuam abrindo apenas com descrição e impacto.
+- **Fila — `/chamados`**: filtros todos/novos/meus/aguardando, categoria, setor, impacto e complexidade; busca por número, solicitante e descrição no servidor.
+- **Início do TI**: novos na fila, meus em atendimento, meus aguardando, resolvidos hoje e apoios atuais. Atendimento rápido continua destacado no celular.
+
+Filtros gerenciais combináveis: Hoje, Últimos 7 dias, Últimos 30 dias, Este mês, Mês anterior ou datas personalizadas, setor, técnico, categoria, complexidade e status. URLs conservam filtros e paginação. CSV em **Exportar CSV** usa os mesmos filtros, UTF-8/BOM, `;`, datas UTC e durações em segundos, com proteção contra fórmulas.
+
+**Leia [docs/metrics.md](docs/metrics.md) para as definições exatas.** Aberturas usam `createdAt`; resoluções usam `resolvedAt`; backlog é sempre atual e não é limitado pelo período. A primeira resposta é o primeiro evento ASSUMIDO. Tempo ativo de ciclo soma intervalos EM_ATENDIMENTO, excluindo NOVO e AGUARDANDO; não é hora trabalhada. Apoios e participações principais são distintos; só o responsável final recebe uma resolução. Ciclos sem histórico suficiente não recebem tempos inventados.
+
+`APP_TIMEZONE` centraliza exibição e períodos, padrão **America/Belem**. Configure outro fuso IANA no `.env` e reinicie o servidor, se necessário. O banco mantém UTC.
+
+### Política de senha
+
+Todos os caminhos (criação, redefinição, primeiro login e alteração voluntária) aceitam **6–128 caracteres**, inclusive `123456`, `456789`, `allan01` e `senha123`. Não há restrição a números nem exigência de composição. Argon2id, limitação de login, troca obrigatória e revogação de sessões permanecem ativos. Esses exemplos ilustram o formato; não são contas ou senhas cadastradas pelo projeto.
+
+### Demonstração separada, opcional
+
+Para visualizar os indicadores com 54 chamados fictícios em diferentes períodos, categorias, complexidades, esperas, apoios e quatro técnicos (um inativo):
+
+```bash
+npm run demo:setup
+npm run build
+npm run demo:start
+```
+
+Abra **http://localhost:3002**. O comando cria **somente `central_suporte_demo`**, separado do banco real, e `.env.demo` ignorado pelo Git. Pode coexistir com a aplicação na porta 3000. Não use esse seed em produção. As proteções exigem banco com sufixo `_demo` e `SEED_DEMO=true`.
+
+- ADMIN: `demo.admin`; senha inicial em `INITIAL_ADMIN_PASSWORD` de `.env.demo`.
+- GESTOR: `demo.gestor`.
+- TI: `demo.carlos`, `demo.luiza`, `demo.giovanni`; `demo.inativo` não pode entrar.
+- Funcionários: `demo.ana`, `demo.pedro`, `demo.julia`.
+- As contas não administrativas usam a senha aleatória `DEMO_PASSWORD` de `.env.demo`. Todos os usuários ativos precisam trocar a senha no primeiro login. O seed não redefine senhas ao ser executado novamente.
+
 ## Modelo de dados
 
 - **User**: nome, username único normalizado, hash de senha, setor, perfil, estado, troca obrigatória e timestamps.
 - **Department**: cadastro próprio, nome único e estado; preparado para administração futura.
 - **Session**: hash do token, usuário, criação e expiração absoluta de 8 horas.
 - **LoginThrottle**: contador persistente por username; máximo de 10 tentativas por janela de 15 minutos. Entrar com sucesso limpa o contador.
-- **Ticket**: número sequencial, descrição, impacto, solicitante, setor na abertura, responsável principal, status, origem, motivo/detalhe de espera, criação/início/resolução.
+- **Category**: nome único (também normalizado no banco), ativa/inativa e data de criação; referências históricas restritivas.
+- **Ticket**: categoria e complexidade opcionais, número sequencial, descrição, impacto, solicitante, setor na abertura, responsável principal, status, origem, motivo/detalhe de espera, criação/início/resolução.
 - **TicketParticipant**: relação normalizada de apoios, com unicidade por chamado/técnico.
-- **TicketEvent**: ator, técnico de destino, tipo, status anterior/novo, motivo, nota, metadata auxiliar, timestamp e sequência de ordenação.
+- **TicketEvent**: ator, técnico de destino, tipo, status anterior/novo, categoria/complexidade anterior/nova, motivo, nota, metadata auxiliar, timestamp e sequência de ordenação.
 - **TicketComment**: autor, conteúdo, chamado e horário.
 - **UserAudit**: criação/alterações administrativas e mudanças de senha sem registrar senhas ou hashes nos metadados.
 
@@ -90,7 +144,7 @@ FKs restritivas protegem o histórico. Índices cobrem fila, solicitante, respon
 
 ## Segurança
 
-- Argon2id: 64 MiB, 3 iterações, paralelismo 1. Senhas entre 12 e 128 caracteres.
+- Argon2id: 64 MiB, 3 iterações, paralelismo 1. Senhas entre 6 e 128 caracteres.
 - Tokens de sessão aleatórios de 256 bits; somente SHA-256 persiste. Cookies HttpOnly/SameSite=Lax e Secure em HTTPS.
 - Validação Zod e autorização no servidor por operação. Usuário/role da sessão são consultados no banco, nunca confiados ao formulário.
 - Server Actions com validação explícita de Origin contra APP_URL, além da proteção nativa do Next.js.
@@ -108,15 +162,16 @@ npm run typecheck
 npm test
 npm run build
 npm run test:e2e
+npm audit
 ```
 
 Os testes criam um **banco temporário exclusivo** no mesmo PostgreSQL, aplicam todas as migrations e o removem ao terminar. Não alteram os dados reais. O usuário de conexão precisa de permissão CREATEDB; o usuário local do Compose possui essa permissão. Em caso de interrupção abrupta, pode sobrar um banco `central_test_*` para remoção manual após confirmar que nenhum teste o utiliza.
 
-`npm test`: autenticação, senha incorreta, usuário inativo, sessão expirada/revogada, troca obrigatória, IDOR, permissões administrativas, criação/normalização de usuários, claim concorrente, status, espera/retomada, apoio, transferência, comentário, atendimento rápido, preservação de histórico e limitação de login.
+`npm test`: autenticação, senha incorreta, usuário inativo, sessão expirada/revogada, troca obrigatória, IDOR, permissões administrativas, criação/normalização de usuários, claim concorrente, status, espera/retomada, apoio, transferência, comentário, atendimento rápido, preservação de histórico e limitação de login. A suíte gerencial cobre senhas/PINs, categorias, complexidade, permissões, transferências, apoios, esperas múltiplas, coortes, filtros, mediana, timezone, CSV e paginação.
 
-`npm run test:e2e`: inicia build de produção na porta 3100, executa o cenário real pelo navegador (desktop e viewport mobile), valida área administrativa, GESTOR, timeline, manifest, ícones, cabeçalhos e rejeição de POST de outra origem. Também executa axe para regras WCAG A/AA nas telas de login, administração, funcionário, detalhe resolvido e atendimento rápido. Usa Chrome local quando encontrado. Caso contrário, instale apenas o navegador de teste com `npx playwright install chromium`. Screenshots e traces de falhas ficam em `test-results/`.
+`npm run test:e2e`: inicia build de produção na porta 3100, executa o cenário real pelo navegador (desktop e viewport mobile), valida área administrativa, GESTOR, timeline, manifest, ícones, cabeçalhos e rejeição de POST de outra origem. Também executa axe para regras WCAG A/AA nas telas de login, administração, funcionário, detalhe resolvido e atendimento rápido, panorama, equipe e detalhes gerenciais. Valida classificação técnica, filtros e CSV no navegador. Usa Chrome local quando encontrado. Caso contrário, instale apenas o navegador de teste com `npx playwright install chromium`. Screenshots e traces de falhas ficam em `test-results/`.
 
-Validação da entrega: **20 testes de integração e 2 testes E2E aprovados**, lint sem avisos, TypeScript sem erros, build de produção aprovado e auditoria npm sem vulnerabilidades conhecidas. As verificações automáticas de acessibilidade não substituem uma avaliação manual completa com tecnologias assistivas.
+Validação da entrega: **40 testes de integração e 2 testes E2E aprovados**, lint sem avisos, TypeScript sem erros, build de produção aprovado e auditoria npm sem vulnerabilidades conhecidas. As verificações automáticas de acessibilidade não substituem uma avaliação manual completa com tecnologias assistivas.
 
 `npm audit` verifica dependências. Overrides de deepmerge-ts 8.0.2 e mysql2 3.24.4 corrigem avisos transitivos do Prisma CLI, validados com generate/migrations/testes/build.
 
@@ -135,6 +190,11 @@ src/lib/auth-service.ts  Hash, login, sessões, expiração e senha
 src/lib/auth.ts          Proteção das páginas/actions
 src/lib/services.ts      Regras, permissões, transações e auditoria
 src/lib/validation.ts    Schemas de entrada
+src/lib/analytics-*.ts   Consultas parametrizadas e agregações PostgreSQL
+src/lib/period.ts        Datas civis e filtros de período
+src/lib/config.ts        Configuração central de timezone
+src/lib/csv.ts           Serialização segura da exportação
+docs/metrics.md          Contrato e limitações dos indicadores
 src/components/         Formulários acessíveis e componentes visuais
 prisma/                  Schema, migrations e bootstrap
 scripts/                 Configuração segura e execução isolada de testes
@@ -143,4 +203,10 @@ public/                  Ícones e service worker sem cache privado
 AGENTS.md                Regras para manutenção por futuros agentes
 ```
 
-Decisões: componentes locais pequenos em vez de uma dependência completa de UI; fontes do sistema sem requests externos; datas UTC com exibição em America/Sao_Paulo; paginação de chamados de 20 em 20. Dev/build usam Webpack, opção estável do Next.js 16, porque o Turbopack não conseguiu abrir uma porta interna de processamento de CSS no ambiente restrito de desenvolvimento. A busca de pessoas carrega a lista ativa no servidor nesta V1; busca paginada no banco pode ser adotada se o cadastro crescer muito. Não há atualização em tempo real: a página é atualizada após ações próprias; para ver alterações de outro usuário, recarregue.
+Decisões: componentes locais pequenos em vez de uma dependência completa de UI; fontes do sistema sem requests externos; datas UTC com exibição no APP_TIMEZONE; paginação de chamados, equipe e comentários em 20 e eventos em 30 registros. Gráficos SVG/CSS com tabela acessível, sem biblioteca adicional. Dev/build usam Webpack, opção estável do Next.js 16, porque o Turbopack não conseguiu abrir uma porta interna de processamento de CSS no ambiente restrito de desenvolvimento. A busca de pessoas carrega a lista ativa no servidor nesta V1; busca paginada no banco pode ser adotada se o cadastro crescer muito. Não há atualização em tempo real: a página é atualizada após ações próprias; para ver alterações de outro usuário, recarregue.
+
+## Limitações deliberadas
+
+Não há ranking, score, horas individuais, percentual de utilização, SLA, custo, jornada ou indicação automática de sobrecarga: faltam dados confiáveis para calculá-los. O backlog, as esperas e a complexidade dão contexto para análise humana. Classificações/status são os atuais, mesmo quando o período é passado; não há reconstrução histórica desses filtros. GESTOR consulta dados gerenciais e exporta, mas o detalhe operacional permanece reservado ao TI/ADMIN e ao solicitante autorizado.
+
+Exportações usam snapshot consistente e lotes de 500, com timeout de dois minutos; intervalos grandes podem exigir uma seleção menor. A disponibilidade de métricas depende dos eventos preservados. O sistema continua sem push, notificações externas, reabertura ou atualização em tempo real.

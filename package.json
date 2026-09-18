@@ -19,7 +19,9 @@
     "test": "node scripts/test-runner.mjs",
     "test:e2e": "node scripts/test-runner.mjs --e2e",
     "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "format:check": "prettier --check .",
+    "demo:setup": "node scripts/demo-setup.mjs",
+    "demo:start": "node --env-file=.env.demo node_modules/next/dist/bin/next start --port 3002"
   },
   "dependencies": {
     "@prisma/adapter-pg": "^7.10.0",

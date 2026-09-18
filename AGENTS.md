@@ -4,7 +4,7 @@
 
 - Monólito Next.js 16 App Router + React + TypeScript strict, PostgreSQL 17, Prisma 7 com adapter-pg, npm e Tailwind 4.
 - Sistema corporativo fechado. Não adicionar signup, autenticação externa, SaaS, IA, Supabase, Firebase ou microserviços.
-- A V1 termina no fluxo operacional. Indicadores avançados, push, offline, inventário e integrações dependem de solicitação posterior.
+- A V1.1 inclui gestão e métricas conforme docs/metrics.md. Push, offline, inventário, IA, pontuação, ranking e integrações continuam fora do escopo.
 - Não fazer deploy externo sem pedido. O projeto usa execução local e Docker Compose apenas para o banco.
 - Dev/build usam Webpack por compatibilidade com o ambiente restrito (o Turbopack requer uma porta interna indisponível aqui). Isso não altera o App Router nem a arquitetura.
 
@@ -12,10 +12,10 @@
 
 - A autorização real fica no servidor. `src/lib/auth.ts` valida sessões nas páginas/actions e `src/lib/services.ts` relê o ator no banco para cada operação.
 - Nunca aceitar role, autor, setor de abertura ou técnico principal do cliente como fonte de autorização. IDs recebidos devem passar pelas regras do serviço.
-- FUNCIONARIO só lê/comenta os próprios chamados. TI/ADMIN veem a fila; apenas responsável principal ou ADMIN alteram status, apoio e responsável. GESTOR não tem acesso operacional na V1.
+- FUNCIONARIO só lê/comenta os próprios chamados. TI/ADMIN veem a fila; apenas responsável principal ou ADMIN alteram status, apoio e responsável. GESTOR tem relatórios e CSV, mas não acessa detalhes operacionais de chamados. Somente ADMIN/GESTOR podem acessar /gestor e suas consultas/exportações. TI não acessa indicadores de colegas.
 - Todas as mutações web são Server Actions com verificação explícita de Origin contra APP_URL, além da proteção do Next.js. Não criar mutações GET.
 - Cookies HttpOnly, SameSite=Lax, validade de 8 horas; Secure obrigatório fora de localhost. Sessões persistem somente hash SHA-256 do token aleatório de 256 bits.
-- Senhas Argon2id (64 MiB, 3 iterações, paralelismo 1), 12–128 caracteres. Nunca logar senha, hash, token, `.env` ou conteúdo de formulários.
+- Senhas Argon2id (64 MiB, 3 iterações, paralelismo 1), 6–128 caracteres. Nunca logar senha, hash, token, `.env` ou conteúdo de formulários.
 - Usuários novos/resetados obrigatoriamente trocam senha. Inativação, alterações cadastrais e redefinição revogam sessões.
 - Preservar mensagens genéricas de login e limitação persistente de tentativas. Tratar AppError/ZodError sem expor stack traces.
 
@@ -37,7 +37,7 @@
 - Evitar bibliotecas de UI quando componentes pequenos resolverem. CSS usa tokens e componentes locais, com Tailwind disponível.
 - Não usar fontes externas: o sistema deve funcionar localmente sem buscar assets em terceiros.
 - PWA não pode cachear páginas privadas ou dados de usuários. Service worker atual só prepara instalação.
-- Datas são armazenadas em UTC e exibidas em America/Sao_Paulo. Paginação de chamados em 20 registros.
+- Datas em UTC; APP_TIMEZONE em src/lib/config.ts (padrão America/Belem) centraliza exibição e filtros. Não hardcode fuso em outros módulos. Chamados/equipe/comentários paginados em 20 e timeline em 30 registros.
 - Não substituir serviços por mocks nem ignorar erros para fazer testes passarem.
 
 ## Validação
@@ -48,3 +48,24 @@
 - E2E usa Chrome local quando instalado, ou Chromium do Playwright. Screenshots/traces ficam em test-results, ignorado pelo Git.
 - Não commitar `.env`, node_modules, `.next`, Prisma gerado, credenciais ou artefatos de testes.
 - Overrides de deepmerge-ts e mysql2 corrigem advisories transitivos do Prisma CLI; verificar compatibilidade e auditoria ao atualizar.
+
+## Gestão e métricas
+
+- Leia docs/metrics.md antes de mudar consultas; o contrato diferencia coortes de criação, resolução, participação e backlog atual.
+- Agregações em src/lib/analytics-query.ts e analytics-service.ts usam SQL parametrizado e eventos. Nunca envie todos os chamados ao cliente para calcular métricas.
+- Categoria e complexidade opcionais, alteradas por TI/ADMIN, com evento atômico. Funcionário continua abrindo somente com descrição/impacto.
+- Apoio removido permanece nas métricas históricas via eventos. Somente o responsável final recebe a resolução. Não converter tempo de ciclo em horas individuais.
+- Histórico incompleto é indisponível, nunca zero inventado. Mediana usa percentile_cont e amostra explícita.
+- CSV autentica e autoriza, neutraliza fórmulas e usa paginação por chave em snapshot repeatable-read.
+- Dados fictícios apenas em central_suporte_demo com SEED_DEMO=true e .env.demo ignorado. Nunca popular banco real com seed de demonstração.
+- Senhas/PINs de 6–128 caracteres são decisão explícita do usuário; não exigir apenas números nem restaurar mínimo 12.
+
+<!-- BEGIN:nextjs-agent-rules -->
+
+# This is NOT the Next.js you know
+
+This version has breaking changes — APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` (resolved from this file's directory; in monorepos the `next` package may not be visible from the repo root) before writing any code. Heed deprecation notices.
+
+This block is written and re-added by `next dev` — verify at `node_modules/next/dist/server/lib/generate-agent-files.js`. Removing it from a diff only re-creates the uncommitted change; committing it with your work keeps the tree clean.
+
+<!-- END:nextjs-agent-rules -->

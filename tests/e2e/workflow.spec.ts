@@ -1,8 +1,8 @@
 import { test, expect, type Page } from '@playwright/test';
 import { mkdir } from 'node:fs/promises';
 import AxeBuilder from '@axe-core/playwright';
-const temporary = process.env.TEST_PASSWORD!;
-const finalPassword = `${temporary}.nova`;
+const temporary = '123456';
+const finalPassword = '456789';
 async function login(page: Page, username: string, password: string) {
   await page.goto('/login');
   await page.getByLabel('Usuário', { exact: true }).fill(username);
@@ -20,7 +20,7 @@ async function firstLogin(page: Page, username: string, password: string) {
   await page.getByRole('button', { name: 'Salvar nova senha' }).click();
   await expect(page.getByRole('status')).toContainText('Senha alterada');
   await login(page, username, finalPassword);
-  await expect(page.getByRole('heading', { name: /^Olá,/ })).toBeVisible();
+  await expect(page.getByRole('heading', { name: /^(Olá,|Panorama do suporte)/ })).toBeVisible();
 }
 async function logout(page: Page) {
   await page.getByRole('button', { name: 'Sair', exact: true }).click();
@@ -60,6 +60,19 @@ test('cenário completo no navegador: admin, funcionário, TI, histórico e aten
   await page.screenshot({ path: 'test-results/screenshots/login-desktop.png', fullPage: true });
   await accessible(page);
   await firstLogin(page, process.env.INITIAL_ADMIN_USERNAME!, process.env.INITIAL_ADMIN_PASSWORD!);
+  await page.goto('/admin/categorias');
+  await page.getByLabel('Nome da categoria', { exact: true }).fill('E2E Rede');
+  await page.getByRole('button', { name: 'Criar categoria', exact: true }).click();
+  await expect(page.getByRole('status')).toContainText('Categoria salva');
+  const categoryForm = page
+    .locator('form')
+    .filter({ has: page.locator('input[value="E2E Rede"]') });
+  const categoryId = await categoryForm.locator('input[name="id"]').inputValue();
+  await page.locator('#category-' + categoryId).fill('E2E Rede / Internet');
+  await categoryForm.getByRole('button', { name: 'Salvar categoria' }).click();
+  await expect(page.locator('#category-' + categoryId)).toHaveValue('E2E Rede / Internet');
+  await page.goto('/gestor');
+  await expect(page.getByRole('heading', { name: 'Panorama do suporte' })).toBeVisible();
   await createUser(page, 'Ana Financeiro', 'ana.financeiro', 'FUNCIONARIO');
   await createUser(page, 'Bruno Técnico', 'bruno.ti', 'TI');
   await createUser(page, 'Carla Técnica', 'carla.ti', 'TI');
@@ -78,6 +91,7 @@ test('cenário completo no navegador: admin, funcionário, TI, histórico e aten
   await page
     .getByLabel('O que aconteceu?')
     .fill('Não consigo abrir o sistema financeiro para concluir os pagamentos.');
+  await expect(page.getByLabel('Categoria técnica')).toHaveCount(0);
   await page.getByLabel('Estou bloqueado').check();
   await page.getByRole('button', { name: 'Enviar chamado' }).click();
   await expect(page.getByRole('status')).toContainText('Chamado registrado');
@@ -93,6 +107,12 @@ test('cenário completo no navegador: admin, funcionário, TI, histórico e aten
     .getByRole('link')
     .filter({ hasText: 'Não consigo abrir o sistema financeiro' })
     .click();
+  await page
+    .getByLabel('Categoria técnica', { exact: true })
+    .selectOption({ label: 'E2E Rede / Internet' });
+  await page.getByLabel('Complexidade operacional').selectOption('ALTA');
+  await page.getByRole('button', { name: 'Salvar classificação' }).click();
+  await expect(page.locator('.timeline')).toContainText('Categoria técnica alterada');
   await page.getByRole('button', { name: 'Assumir chamado' }).click();
   await expect(page.getByText('Em atendimento', { exact: true })).toBeVisible();
   await page
@@ -150,11 +170,53 @@ test('cenário completo no navegador: admin, funcionário, TI, histórico e aten
   await expect(page.locator('.page-heading .eyebrow')).toContainText('ATENDIMENTO RÁPIDO');
   await logout(page);
   await firstLogin(page, 'gustavo.gestor', temporary);
-  await expect(
-    page.getByRole('heading', { name: 'Indicadores começam com bons registros.' }),
-  ).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Panorama do suporte' })).toBeVisible();
   await page.goto('/admin/usuarios');
   await expect(page.getByRole('heading', { name: 'Não encontramos este registro.' })).toBeVisible();
+  await page.goto('/gestor');
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.getByLabel('Período', { exact: true }).selectOption('7dias');
+  await page.getByLabel('Setor solicitante', { exact: true }).selectOption({ label: 'Financeiro' });
+  await page.getByLabel('Técnico', { exact: true }).selectOption({ label: 'Bruno Técnico' });
+  await page.getByRole('button', { name: 'Aplicar filtros' }).click();
+  await expect(page).toHaveURL(/periodo=7dias/);
+  await expect(page.getByRole('heading', { name: 'Demanda por categoria' })).toBeVisible();
+  await expect(page.getByText(/chamado\(s\) com histórico incompleto/)).toHaveCount(0);
+  await accessible(page);
+  await noOverflow(page);
+  await page.screenshot({
+    path: 'test-results/screenshots/management-desktop.png',
+    fullPage: true,
+  });
+  const csvLink = await page.getByRole('link', { name: 'Exportar CSV' }).getAttribute('href');
+  const csv = await page.request.get(csvLink!);
+  expect(csv.status()).toBe(200);
+  expect(csv.headers()['content-type']).toContain('text/csv');
+  expect(await csv.text()).toContain('E2E Rede / Internet');
+  await page.getByRole('link', { name: 'Equipe de TI', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Equipe de TI', exact: true })).toBeVisible();
+  await page.getByRole('link', { name: 'Bruno Técnico', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Bruno Técnico', exact: true })).toBeVisible();
+  await expect(page.getByText('Participou como apoio', { exact: true })).toBeVisible();
+  await accessible(page);
+  await page.screenshot({
+    path: 'test-results/screenshots/technician-desktop.png',
+    fullPage: true,
+  });
+  const detailUrl = page.url();
+  await logout(page);
+  await login(page, 'bruno.ti', finalPassword);
+  for (const path of ['/gestor', '/gestor/equipe', detailUrl]) {
+    await page.goto(path);
+    await expect(
+      page.getByRole('heading', { name: 'Não encontramos este registro.' }),
+    ).toBeVisible();
+  }
+  expect((await page.request.get('/gestor/exportar')).status()).toBe(403);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/');
+  await noOverflow(page);
+  await expect(page.getByText('Meus aguardando', { exact: true })).toBeVisible();
   expect(consoleErrors).toEqual([]);
 });
 test('manifest, ícones e proteção contra POST de outra origem', async ({ request }) => {
