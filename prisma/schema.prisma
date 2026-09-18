@@ -1,0 +1,176 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+datasource db {
+  provider = "postgresql"
+}
+enum Role {
+  ADMIN
+  FUNCIONARIO
+  TI
+  GESTOR
+}
+enum Impact {
+  BLOQUEADO
+  PARCIAL
+  BAIXO
+}
+enum TicketStatus {
+  NOVO
+  EM_ATENDIMENTO
+  AGUARDANDO
+  RESOLVIDO
+}
+enum TicketOrigin {
+  PORTAL
+  ATENDIMENTO_RAPIDO
+}
+enum WaitingReason {
+  USUARIO
+  FORNECEDOR
+  PECA
+  APROVACAO
+  OUTRO
+}
+enum EventType {
+  CRIADO
+  ASSUMIDO
+  APOIO_ADICIONADO
+  APOIO_REMOVIDO
+  STATUS_ALTERADO
+  AGUARDANDO
+  RETOMADO
+  RESPONSAVEL_ALTERADO
+  COMENTARIO
+  RESOLVIDO
+  REABERTO
+}
+model Department {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  users     User[]
+  tickets   Ticket[]
+}
+model User {
+  id                 String @id @default(cuid())
+  name               String
+  username           String @unique
+  passwordHash       String
+  departmentId       String
+  department         Department @relation(fields: [departmentId], references: [id], onDelete: Restrict)
+  role               Role @default(FUNCIONARIO)
+  active             Boolean @default(true)
+  mustChangePassword Boolean @default(true)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+  sessions           Session[]
+  requests           Ticket[] @relation("Requester")
+  assignments        Ticket[] @relation("Assignee")
+  participants       TicketParticipant[]
+  events             TicketEvent[] @relation("EventActor")
+  targetedEvents     TicketEvent[] @relation("EventTarget")
+  comments           TicketComment[]
+  auditActions       UserAudit[] @relation("AuditActor")
+  auditSubjects      UserAudit[] @relation("AuditSubject")
+  @@index([departmentId])
+  @@index([role, active])
+}
+model Session {
+  id        String @id @default(cuid())
+  tokenHash String @unique
+  userId    String
+  user      User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  expiresAt DateTime
+  @@index([userId])
+  @@index([expiresAt])
+}
+model LoginThrottle {
+  key       String @id
+  attempts  Int @default(1)
+  expiresAt DateTime
+  @@index([expiresAt])
+}
+model Ticket {
+  id              String @id @default(cuid())
+  number          Int @unique @default(autoincrement())
+  description     String
+  impact          Impact
+  status          TicketStatus @default(NOVO)
+  origin          TicketOrigin @default(PORTAL)
+  requesterId     String
+  requester       User @relation("Requester", fields: [requesterId], references: [id], onDelete: Restrict)
+  departmentId    String
+  department      Department @relation(fields: [departmentId], references: [id], onDelete: Restrict)
+  assigneeId      String?
+  assignee        User? @relation("Assignee", fields: [assigneeId], references: [id], onDelete: Restrict)
+  waitingReason   WaitingReason?
+  waitingNote     String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  startedAt       DateTime?
+  resolvedAt      DateTime?
+  participants    TicketParticipant[]
+  events          TicketEvent[]
+  comments        TicketComment[]
+  @@index([requesterId, createdAt])
+  @@index([status, createdAt])
+  @@index([assigneeId, status])
+  @@index([departmentId])
+}
+model TicketParticipant {
+  ticketId  String
+  userId    String
+  joinedAt  DateTime @default(now())
+  ticket    Ticket @relation(fields: [ticketId], references: [id], onDelete: Restrict)
+  user      User @relation(fields: [userId], references: [id], onDelete: Restrict)
+  @@id([ticketId, userId])
+  @@index([userId])
+}
+model TicketEvent {
+  id            String @id @default(cuid())
+  sequence      Int @unique @default(autoincrement())
+  ticketId      String
+  ticket        Ticket @relation(fields: [ticketId], references: [id], onDelete: Restrict)
+  type          EventType
+  actorId       String
+  actor         User @relation("EventActor", fields: [actorId], references: [id], onDelete: Restrict)
+  targetUserId  String?
+  targetUser    User? @relation("EventTarget", fields: [targetUserId], references: [id], onDelete: Restrict)
+  fromStatus    TicketStatus?
+  toStatus      TicketStatus?
+  waitingReason WaitingReason?
+  note          String?
+  metadata      Json?
+  createdAt     DateTime @default(now())
+  @@index([ticketId, createdAt])
+  @@index([actorId])
+  @@index([targetUserId])
+  @@index([type, createdAt])
+}
+model TicketComment {
+  id        String @id @default(cuid())
+  ticketId  String
+  ticket    Ticket @relation(fields: [ticketId], references: [id], onDelete: Restrict)
+  authorId  String
+  author    User @relation(fields: [authorId], references: [id], onDelete: Restrict)
+  content   String
+  createdAt DateTime @default(now())
+  @@index([ticketId, createdAt])
+  @@index([authorId])
+}
+model UserAudit {
+  id        String @id @default(cuid())
+  actorId   String
+  actor     User @relation("AuditActor", fields: [actorId], references: [id], onDelete: Restrict)
+  subjectId String
+  subject   User @relation("AuditSubject", fields: [subjectId], references: [id], onDelete: Restrict)
+  action    String
+  metadata  Json?
+  createdAt DateTime @default(now())
+  @@index([actorId])
+  @@index([subjectId, createdAt])
+}

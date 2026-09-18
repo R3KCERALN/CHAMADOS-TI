@@ -1,0 +1,90 @@
+import { randomBytes, createHash } from 'node:crypto';
+import argon2 from 'argon2';
+import { db } from './db';
+import { AppError } from './errors';
+import { passwordSchema, usernameSchema } from './validation';
+export const publicUserSelect = {
+  id: true,
+  name: true,
+  username: true,
+  departmentId: true,
+  role: true,
+  active: true,
+  mustChangePassword: true,
+} as const;
+export const hashPassword = (password: string) =>
+  argon2.hash(passwordSchema.parse(password), {
+    type: argon2.argon2id,
+    memoryCost: 65536,
+    timeCost: 3,
+    parallelism: 1,
+  });
+const tokenHash = (token: string) => createHash('sha256').update(token).digest('hex');
+let dummyHash: Promise<string> | undefined;
+export async function login(username: string, password: string) {
+  const parsed = usernameSchema.safeParse(username);
+  if (!parsed.success || password.length > 128)
+    throw new AppError('Usuário ou senha inválidos.', 401);
+  const key = tokenHash(parsed.data);
+  const now = new Date();
+  await db.loginThrottle.deleteMany({ where: { expiresAt: { lt: now } } });
+  const windowEnd = new Date(Date.now() + 15 * 60 * 1000);
+  const throttle = await db.loginThrottle.upsert({
+    where: { key },
+    create: { key, expiresAt: windowEnd },
+    update: { attempts: { increment: 1 } },
+  });
+  if (throttle.attempts > 10)
+    throw new AppError('Muitas tentativas. Aguarde 15 minutos e tente novamente.', 429);
+  const user = await db.user.findUnique({ where: { username: parsed.data } });
+  dummyHash ??= hashPassword(randomBytes(32).toString('hex'));
+  const valid = await argon2.verify(user?.passwordHash ?? (await dummyHash), password);
+  if (!user?.active || !valid) throw new AppError('Usuário ou senha inválidos.', 401);
+  const token = randomBytes(32).toString('base64url');
+  const expiresAt = new Date(Date.now() + 8 * 60 * 60 * 1000);
+  await db.$transaction(async (tx) => {
+    // Serialize against account changes so deactivation/reset cannot leave a fresh valid session.
+    await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${user.id} FOR UPDATE`;
+    const current = await tx.user.findUniqueOrThrow({ where: { id: user.id } });
+    if (!current.active || current.passwordHash !== user.passwordHash)
+      throw new AppError('Usuário ou senha inválidos.', 401);
+    await tx.session.deleteMany({ where: { expiresAt: { lt: now } } });
+    await tx.session.create({ data: { tokenHash: tokenHash(token), userId: user.id, expiresAt } });
+    await tx.loginThrottle.deleteMany({ where: { key } });
+  });
+  return { token, expiresAt, mustChangePassword: user.mustChangePassword };
+}
+export async function getSessionUser(token: string | undefined) {
+  if (!token || token.length > 128) return null;
+  const session = await db.session.findUnique({
+    where: { tokenHash: tokenHash(token) },
+    include: { user: { select: publicUserSelect } },
+  });
+  return session && session.expiresAt > new Date() && session.user.active ? session.user : null;
+}
+export async function logout(token: string | undefined) {
+  if (token) await db.session.deleteMany({ where: { tokenHash: tokenHash(token) } });
+}
+export async function changePassword(userId: string, currentPassword: string, newPassword: string) {
+  if (currentPassword === newPassword)
+    throw new AppError('A nova senha deve ser diferente da senha atual.');
+  const hash = await hashPassword(newPassword);
+  await db.$transaction(async (tx) => {
+    await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${userId} FOR UPDATE`;
+    const user = await tx.user.findUnique({ where: { id: userId } });
+    if (
+      !user?.active ||
+      currentPassword.length > 128 ||
+      !(await argon2.verify(user.passwordHash, currentPassword))
+    )
+      throw new AppError('Senha atual incorreta.');
+    await tx.user.update({
+      where: { id: userId },
+      data: { passwordHash: hash, mustChangePassword: false },
+    });
+    await tx.session.deleteMany({ where: { userId } });
+    await tx.userAudit.create({
+      data: { actorId: userId, subjectId: userId, action: 'SENHA_ALTERADA' },
+    });
+  });
+}
