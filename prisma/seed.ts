@@ -6,6 +6,21 @@ async function main() {
   for (const name of ['TI', 'Financeiro', 'RH', 'Comercial', 'Administrativo', 'Gerência']) {
     await db.department.upsert({ where: { name }, create: { name }, update: {} });
   }
+  for (const name of [
+    'Acesso / Senha',
+    'Hardware',
+    'Software',
+    'Impressora',
+    'Rede / Internet',
+    'E-mail',
+    'ERP / Sistema interno',
+    'Telefonia',
+    'Solicitação de instalação',
+    'Outro',
+  ]) {
+    if (!(await db.category.findFirst({ where: { name: { equals: name, mode: 'insensitive' } } })))
+      await db.category.create({ data: { name } });
+  }
   // Bootstrap only: never reset credentials or promote an existing account on repeat runs.
   if (await db.user.count({ where: { role: 'ADMIN' } })) {
     console.log('Administrador já existente. Credenciais preservadas.');

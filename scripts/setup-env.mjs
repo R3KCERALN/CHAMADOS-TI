@@ -8,6 +8,7 @@ POSTGRES_DB=central_suporte
 POSTGRES_PORT=54329
 DATABASE_URL=postgresql://central:${dbPassword}@localhost:54329/central_suporte
 APP_URL=http://localhost:3000
+APP_TIMEZONE=America/Belem
 COOKIE_SECURE=false
 INITIAL_ADMIN_USERNAME=admin
 INITIAL_ADMIN_NAME=Administrador

@@ -1,3 +1,4 @@
+import { APP_TIMEZONE } from './config';
 export const roleLabels = {
   ADMIN: 'Administrador',
   FUNCIONARIO: 'Funcionário',
@@ -34,11 +35,20 @@ export const eventLabels = {
   COMENTARIO: 'Comentário adicionado',
   RESOLVIDO: 'Chamado resolvido',
   REABERTO: 'Chamado reaberto',
+  CATEGORIA_ALTERADA: 'Categoria técnica alterada',
+  COMPLEXIDADE_ALTERADA: 'Complexidade alterada',
 };
 export const formatDate = (date: Date) =>
   new Intl.DateTimeFormat('pt-BR', {
     dateStyle: 'short',
     timeStyle: 'short',
-    timeZone: 'America/Sao_Paulo',
+    timeZone: APP_TIMEZONE,
   }).format(date);
 export const ticketNumber = (n: number) => `CS-${String(n).padStart(4, '0')}`;
+
+export const complexityLabels = {
+  BAIXA: 'Baixa',
+  MEDIA: 'Média',
+  ALTA: 'Alta',
+  CRITICA: 'Crítica',
+};

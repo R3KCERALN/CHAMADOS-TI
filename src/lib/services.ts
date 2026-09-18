@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { resolvePeriod } from './period';
 import { db } from './db';
 import { AppError } from './errors';
 import { hashPassword, publicUserSelect } from './auth-service';
@@ -117,6 +118,7 @@ export async function createTicket(actorId: string, input: unknown, requesterId?
       : user;
     if (!requester) throw new AppError('Selecione um funcionário ativo.');
     const quick = !!requesterId;
+    const occurredAt = new Date();
     const ticket = await tx.ticket.create({
       data: {
         ...data,
@@ -125,7 +127,8 @@ export async function createTicket(actorId: string, input: unknown, requesterId?
         origin: quick ? 'ATENDIMENTO_RAPIDO' : 'PORTAL',
         status: quick ? 'EM_ATENDIMENTO' : 'NOVO',
         assigneeId: quick ? actorId : null,
-        startedAt: quick ? new Date() : null,
+        createdAt: occurredAt,
+        startedAt: quick ? occurredAt : null,
       },
     });
     await tx.ticketEvent.create({
@@ -133,6 +136,7 @@ export async function createTicket(actorId: string, input: unknown, requesterId?
         ticketId: ticket.id,
         actorId,
         type: 'CRIADO',
+        createdAt: occurredAt,
         toStatus: ticket.status,
         metadata: { origin: ticket.origin },
       },
@@ -144,6 +148,7 @@ export async function createTicket(actorId: string, input: unknown, requesterId?
           actorId,
           targetUserId: actorId,
           type: 'ASSUMIDO',
+          createdAt: occurredAt,
           toStatus: 'EM_ATENDIMENTO',
         },
       });
@@ -161,27 +166,51 @@ function manages(role: Role, userId: string, ticket: Ticket) {
       403,
     );
 }
-export async function getTicket(actorId: string, ticketId: string) {
+export async function getTicket(
+  actorId: string,
+  ticketId: string,
+  eventsPage = 1,
+  commentsPage = 1,
+) {
   const user = await actor(db, actorId);
   const ticket = await db.ticket.findUnique({
     where: { id: ticketId },
     include: {
       requester: { select: { id: true, name: true } },
       department: true,
+      category: true,
+      _count: { select: { events: true, comments: true } },
       assignee: { select: { id: true, name: true } },
       participants: { include: { user: { select: { id: true, name: true, active: true } } } },
       events: {
-        include: { actor: { select: { name: true } }, targetUser: { select: { name: true } } },
-        orderBy: { sequence: 'asc' },
+        include: {
+          actor: { select: { name: true } },
+          targetUser: { select: { name: true } },
+          previousCategory: true,
+          nextCategory: true,
+        },
+        orderBy: { sequence: 'desc' },
+        take: 30,
+        skip: (Math.max(1, Math.trunc(eventsPage) || 1) - 1) * 30,
       },
-      comments: { include: { author: { select: { name: true } } }, orderBy: { createdAt: 'asc' } },
+      comments: {
+        include: { author: { select: { name: true } } },
+        orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+        take: 20,
+        skip: (Math.max(1, Math.trunc(commentsPage) || 1) - 1) * 20,
+      },
     },
   });
   if (!ticket) throw new AppError('Chamado não encontrado.', 404);
   visible(user.role, user.id, ticket);
-  return ticket;
+  return { ...ticket, events: ticket.events.reverse(), comments: ticket.comments.reverse() };
 }
-export async function listTickets(actorId: string, filter = 'todos', page = 1) {
+export async function listTickets(
+  actorId: string,
+  filter = 'todos',
+  page = 1,
+  input: Record<string, string | undefined> = {},
+) {
   const user = await actor(db, actorId, ['ADMIN', 'TI', 'FUNCIONARIO']);
   const where: Prisma.TicketWhereInput =
     user.role === 'FUNCIONARIO'
@@ -196,6 +225,54 @@ export async function listTickets(actorId: string, filter = 'todos', page = 1) {
           : filter === 'aguardando'
             ? { status: 'AGUARDANDO' }
             : {};
+  if (user.role !== 'FUNCIONARIO') {
+    if (filter === 'atendimento')
+      Object.assign(where, { assigneeId: user.id, status: 'EM_ATENDIMENTO' });
+    if (filter === 'minha-espera')
+      Object.assign(where, { assigneeId: user.id, status: 'AGUARDANDO' });
+    if (filter === 'apoio')
+      Object.assign(where, {
+        participants: { some: { userId: user.id } },
+        status: { not: 'RESOLVIDO' },
+      });
+    if (filter === 'resolvidos-hoje') {
+      const period = resolvePeriod({ periodo: 'hoje' });
+      Object.assign(where, {
+        assigneeId: user.id,
+        resolvedAt: { gte: period.start, lt: period.end },
+        status: 'RESOLVIDO',
+      });
+    }
+    const fields = z
+      .object({
+        categoryId: z.string().max(100).optional(),
+        departmentId: z.string().max(100).optional(),
+        impact: z.enum(['BLOQUEADO', 'PARCIAL', 'BAIXO']).optional(),
+        complexity: z.enum(['BAIXA', 'MEDIA', 'ALTA', 'CRITICA', 'none']).optional(),
+        q: z.string().trim().max(200).optional(),
+      })
+      .parse(Object.fromEntries(Object.entries(input).filter(([, v]) => v)));
+    if (fields.categoryId)
+      where.categoryId = fields.categoryId === 'none' ? null : fields.categoryId;
+    if (fields.departmentId) where.departmentId = fields.departmentId;
+    if (fields.impact) where.impact = fields.impact;
+    if (fields.complexity)
+      where.complexity = fields.complexity === 'none' ? null : fields.complexity;
+    if (fields.q) {
+      const numeric = Number(fields.q.replace(/^CS-/i, ''));
+      where.AND = [
+        {
+          OR: [
+            { description: { contains: fields.q, mode: 'insensitive' } },
+            { requester: { name: { contains: fields.q, mode: 'insensitive' } } },
+            ...(Number.isSafeInteger(numeric) && numeric > 0 && numeric <= 2147483647
+              ? [{ number: numeric }]
+              : []),
+          ],
+        },
+      ];
+    }
+  }
   const safePage = Math.max(1, Math.min(100000, Math.trunc(page) || 1));
   const [tickets, total] = await Promise.all([
     db.ticket.findMany({
@@ -203,6 +280,7 @@ export async function listTickets(actorId: string, filter = 'todos', page = 1) {
       include: {
         requester: { select: { name: true } },
         department: { select: { name: true } },
+        category: { select: { name: true } },
         assignee: { select: { name: true } },
       },
       orderBy: { createdAt: 'desc' },
@@ -216,9 +294,10 @@ export async function listTickets(actorId: string, filter = 'todos', page = 1) {
 export async function claimTicket(actorId: string, ticketId: string) {
   return db.$transaction(async (tx) => {
     await actor(tx, actorId, techRoles);
+    const occurredAt = new Date();
     const result = await tx.ticket.updateMany({
       where: { id: ticketId, status: 'NOVO', assigneeId: null },
-      data: { assigneeId: actorId, status: 'EM_ATENDIMENTO', startedAt: new Date() },
+      data: { assigneeId: actorId, status: 'EM_ATENDIMENTO', startedAt: occurredAt },
     });
     if (result.count !== 1)
       throw new AppError('Este chamado já foi assumido por outro técnico. Atualize a página.', 409);
@@ -228,6 +307,7 @@ export async function claimTicket(actorId: string, ticketId: string) {
         actorId,
         targetUserId: actorId,
         type: 'ASSUMIDO',
+        createdAt: occurredAt,
         fromStatus: 'NOVO',
         toStatus: 'EM_ATENDIMENTO',
       },
@@ -258,13 +338,14 @@ export async function changeStatus(actorId: string, ticketId: string, input: unk
       throw new AppError('Informe o motivo da espera.');
     if (data.status === 'AGUARDANDO' && data.waitingReason === 'OUTRO' && !data.note)
       throw new AppError('Descreva o motivo da espera.');
+    const occurredAt = new Date();
     await tx.ticket.update({
       where: { id: ticketId },
       data: {
         status: data.status,
         waitingReason: data.status === 'AGUARDANDO' ? data.waitingReason : null,
         waitingNote: data.status === 'AGUARDANDO' ? data.note || null : null,
-        resolvedAt: data.status === 'RESOLVIDO' ? new Date() : null,
+        resolvedAt: data.status === 'RESOLVIDO' ? occurredAt : null,
       },
     });
     await tx.ticketEvent.create({
@@ -277,6 +358,7 @@ export async function changeStatus(actorId: string, ticketId: string, input: unk
             : data.status === 'AGUARDANDO'
               ? 'AGUARDANDO'
               : 'RETOMADO',
+        createdAt: occurredAt,
         fromStatus: ticket.status,
         toStatus: data.status,
         waitingReason: data.status === 'AGUARDANDO' ? data.waitingReason : null,
@@ -361,5 +443,63 @@ export async function addComment(actorId: string, ticketId: string, content: str
       data: { ticketId, actorId, type: 'COMENTARIO', metadata: { commentId: comment.id } },
     });
     return comment;
+  });
+}
+
+export async function saveCategory(actorId: string, input: unknown) {
+  const data = z
+    .object({
+      id: z.string().optional(),
+      name: z.string().trim().min(2).max(100),
+      active: z.boolean().default(true),
+    })
+    .parse(input);
+  return db.$transaction(async (tx) => {
+    await actor(tx, actorId, ['ADMIN']);
+    if (data.id)
+      return tx.category.update({
+        where: { id: data.id },
+        data: { name: data.name, active: data.active },
+      });
+    return tx.category.create({ data: { name: data.name, active: data.active } });
+  });
+}
+export async function classifyTicket(actorId: string, ticketId: string, input: unknown) {
+  const data = z
+    .object({
+      categoryId: z.string().max(100).nullable(),
+      complexity: z.enum(['BAIXA', 'MEDIA', 'ALTA', 'CRITICA']).nullable(),
+    })
+    .parse(input);
+  return db.$transaction(async (tx) => {
+    await actor(tx, actorId, techRoles);
+    const ticket = await lockedTicket(tx, ticketId);
+    if (
+      data.categoryId &&
+      data.categoryId !== ticket.categoryId &&
+      !(await tx.category.findFirst({ where: { id: data.categoryId, active: true } }))
+    )
+      throw new AppError('Selecione uma categoria ativa.');
+    if (data.categoryId !== ticket.categoryId)
+      await tx.ticketEvent.create({
+        data: {
+          ticketId,
+          actorId,
+          type: 'CATEGORIA_ALTERADA',
+          previousCategoryId: ticket.categoryId,
+          nextCategoryId: data.categoryId,
+        },
+      });
+    if (data.complexity !== ticket.complexity)
+      await tx.ticketEvent.create({
+        data: {
+          ticketId,
+          actorId,
+          type: 'COMPLEXIDADE_ALTERADA',
+          previousComplexity: ticket.complexity,
+          nextComplexity: data.complexity,
+        },
+      });
+    return tx.ticket.update({ where: { id: ticketId }, data });
   });
 }

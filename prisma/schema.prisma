@@ -45,6 +45,23 @@ enum EventType {
   COMENTARIO
   RESOLVIDO
   REABERTO
+  CATEGORIA_ALTERADA
+  COMPLEXIDADE_ALTERADA
+}
+enum Complexity {
+  BAIXA
+  MEDIA
+  ALTA
+  CRITICA
+}
+model Category {
+  id        String @id @default(cuid())
+  name      String @unique
+  active    Boolean @default(true)
+  createdAt DateTime @default(now())
+  tickets   Ticket[]
+  previousEvents TicketEvent[] @relation("PreviousCategory")
+  nextEvents TicketEvent[] @relation("NextCategory")
 }
 model Department {
   id        String   @id @default(cuid())
@@ -113,6 +130,9 @@ model Ticket {
   updatedAt       DateTime @updatedAt
   startedAt       DateTime?
   resolvedAt      DateTime?
+  categoryId      String?
+  category        Category? @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  complexity      Complexity?
   participants    TicketParticipant[]
   events          TicketEvent[]
   comments        TicketComment[]
@@ -120,6 +140,12 @@ model Ticket {
   @@index([status, createdAt])
   @@index([assigneeId, status])
   @@index([departmentId])
+  @@index([createdAt])
+  @@index([resolvedAt])
+  @@index([categoryId, createdAt])
+  @@index([complexity, createdAt])
+  @@index([departmentId, createdAt])
+  @@index([assigneeId, resolvedAt])
 }
 model TicketParticipant {
   ticketId  String
@@ -145,11 +171,21 @@ model TicketEvent {
   waitingReason WaitingReason?
   note          String?
   metadata      Json?
+  previousCategoryId String?
+  previousCategory Category? @relation("PreviousCategory", fields: [previousCategoryId], references: [id], onDelete: Restrict)
+  nextCategoryId String?
+  nextCategory Category? @relation("NextCategory", fields: [nextCategoryId], references: [id], onDelete: Restrict)
+  previousComplexity Complexity?
+  nextComplexity Complexity?
   createdAt     DateTime @default(now())
   @@index([ticketId, createdAt])
   @@index([actorId])
   @@index([targetUserId])
   @@index([type, createdAt])
+  @@index([ticketId, sequence])
+  @@index([targetUserId, type, createdAt])
+  @@index([previousCategoryId])
+  @@index([nextCategoryId])
 }
 model TicketComment {
   id        String @id @default(cuid())
