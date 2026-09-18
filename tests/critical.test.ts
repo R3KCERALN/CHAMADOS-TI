@@ -1,6 +1,8 @@
 import { before, after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
+import { syntheticCnpj } from './fixtures';
+import { APP_ORGANIZATION_ID } from '../src/lib/config';
 import { db } from '../src/lib/db';
 import {
   hashPassword,
@@ -18,13 +20,17 @@ let admin: string,
   tech: string,
   tech2: string,
   manager: string,
-  departmentId: string;
+  departmentId: string,
+  primaryCompanyId: string;
+const organizationId = APP_ORGANIZATION_ID;
 let hash: string;
 async function makeUser(role: Role, options = {}) {
   return db.user.create({
     data: {
       name: `Pessoa ${role}`,
       username: `test.${randomBytes(6).toString('hex')}`,
+      organizationId,
+      primaryCompanyId,
       departmentId,
       role,
       passwordHash: hash,
@@ -35,7 +41,17 @@ async function makeUser(role: Role, options = {}) {
 }
 before(async () => {
   assert.match(new URL(process.env.DATABASE_URL!).pathname, /^\/central_test_\d+_[a-f0-9]{8}$/);
-  departmentId = (await db.department.create({ data: { name: 'Setor de teste' } })).id;
+  primaryCompanyId = (
+    await db.company.create({
+      data: {
+        organizationId,
+        displayName: 'Local de teste ' + randomBytes(4).toString('hex'),
+        cnpj: syntheticCnpj(),
+      },
+    })
+  ).id;
+  departmentId = (await db.department.create({ data: { organizationId, name: 'Setor de teste' } }))
+    .id;
   hash = await hashPassword(password);
   [admin, employee, other, tech, tech2, manager] = await Promise.all(
     (['ADMIN', 'FUNCIONARIO', 'FUNCIONARIO', 'TI', 'TI', 'GESTOR'] as Role[]).map(
@@ -70,6 +86,7 @@ test('usuário inativo não faz login nem usa sessão antiga', async () => {
   await service.updateUser(admin, user.id, {
     name: user.name,
     username: user.username,
+    primaryCompanyId,
     departmentId,
     role: user.role,
     active: false,
@@ -107,6 +124,7 @@ test('somente ADMIN lista e cria usuários; role enviada não promove o autor', 
   const input = {
     name: 'Nova pessoa',
     username: 'nova.pessoa',
+    primaryCompanyId,
     departmentId,
     role: 'TI',
     password,
@@ -126,6 +144,7 @@ test('username é normalizado e duplicidade recusada', async () => {
   const input = {
     name: 'Nome duplicado',
     username: ' Nome.Unico ',
+    primaryCompanyId,
     departmentId,
     role: 'FUNCIONARIO',
     password,
@@ -256,12 +275,13 @@ test('desativar preserva histórico e impede novos atendimentos para o usuário'
   await service.updateUser(admin, user.id, {
     name: user.name,
     username: user.username,
+    primaryCompanyId,
     departmentId,
     role: user.role,
     active: false,
   });
   const result = await service.getTicket(tech, ticket.id);
-  assert.equal(result.requester.name, user.name);
+  assert.equal(result.requester!.name, user.name);
   assert.equal(result.events.length, 1);
   await assert.rejects(
     service.createTicket(tech, { description: 'Novo atendimento.', impact: 'BAIXO' }, user.id),
@@ -282,6 +302,8 @@ test('reset administrativo revoga sessão e exige troca; admin não remove o pr�
     service.updateUser(admin, admin, {
       name: adm.name,
       username: adm.username,
+      organizationId,
+      primaryCompanyId,
       departmentId,
       role: 'FUNCIONARIO',
       active: true,

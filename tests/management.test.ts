@@ -1,6 +1,8 @@
 import { before, after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
+import { syntheticCnpj } from './fixtures';
+import { APP_ORGANIZATION_ID } from '../src/lib/config';
 import { db } from '../src/lib/db';
 import { hashPassword, login, changePassword } from '../src/lib/auth-service';
 import { passwordSchema } from '../src/lib/validation';
@@ -26,11 +28,23 @@ let admin: string,
   tech: string,
   tech2: string,
   employee: string,
-  departmentId: string;
+  departmentId: string,
+  primaryCompanyId: string;
+const organizationId = APP_ORGANIZATION_ID;
 const id = () => randomBytes(8).toString('hex');
 before(async () => {
   assert.match(new URL(process.env.DATABASE_URL!).pathname, /^\/central_test_/);
-  departmentId = (await db.department.create({ data: { name: `Base ${id()}` } })).id;
+  primaryCompanyId = (
+    await db.company.create({
+      data: {
+        organizationId,
+        displayName: 'Local de teste ' + randomBytes(4).toString('hex'),
+        cnpj: syntheticCnpj(),
+      },
+    })
+  ).id;
+  departmentId = (await db.department.create({ data: { organizationId, name: `Base ${id()}` } }))
+    .id;
   const hash = await hashPassword('123456');
   [admin, manager, tech, tech2, employee] = await Promise.all(
     (['ADMIN', 'GESTOR', 'TI', 'TI', 'FUNCIONARIO'] as Role[]).map(
@@ -41,6 +55,8 @@ before(async () => {
               name: `Pessoa ${role} ${id()}`,
               username: `test.${id()}`,
               role,
+              organizationId,
+              primaryCompanyId,
               departmentId,
               passwordHash: hash,
               mustChangePassword: false,
@@ -52,11 +68,15 @@ before(async () => {
 });
 after(() => db.$disconnect());
 async function fixture(options: { transfer?: boolean; support?: boolean; pending?: boolean } = {}) {
-  const department = (await db.department.create({ data: { name: `Operação ${id()}` } })).id;
+  const department = (
+    await db.department.create({ data: { organizationId, name: `Operação ${id()}` } })
+  ).id;
   const date = (h: number) => new Date(`2026-09-10T${String(h).padStart(2, '0')}:00:00Z`);
   const ticket = await db.ticket.create({
     data: {
       description: 'Atendimento de teste com períodos conhecidos.',
+      organizationId,
+      requesterName: 'Pessoa histórica',
       requesterId: employee,
       departmentId: department,
       impact: 'PARCIAL',
@@ -117,6 +137,7 @@ test('senha/PIN de seis funciona em criação, reset e troca obrigatória com Ar
   const user = await createUser(admin, {
     name: 'Teste de senha',
     username: `pin.${id()}`,
+    primaryCompanyId,
     departmentId,
     role: 'FUNCIONARIO',
     password: '123456',
@@ -267,6 +288,8 @@ test('mediana PostgreSQL não é distorcida por um único ciclo muito longo', as
     await db.ticket.create({
       data: {
         description: 'Ciclo para teste de mediana.',
+        organizationId,
+        requesterName: 'Pessoa histórica',
         requesterId: employee,
         departmentId: dept,
         assigneeId: tech,

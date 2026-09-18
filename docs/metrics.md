@@ -100,3 +100,17 @@ Leitura em lotes de 500, por número sequencial, dentro de uma transação repea
 Não calculamos horas individuais trabalhadas, utilização percentual, custo, SLA, score de complexidade, eficiência pessoal, ranking nem “melhor/pior técnico”. Não há dados de jornada, dedicação exclusiva ou metas de capacidade que sustentem esses números. Sobrecarga é investigada pela combinação de backlog, espera, complexidade e contexto, sem rótulo automático.
 
 Não reconstruímos a classificação antiga por período nem reabrimos chamados. Nenhuma métrica depende de reabertura nesta entrega. Reabertura futura exigirá atualizar este contrato e os testes para ciclos múltiplos.
+
+## Organização, filial, unidade e solicitantes — V1.2
+
+Todas as consultas e exportações são limitadas à organização do ator autenticado. Nenhum filtro recebido pode ampliar esse escopo. As definições de tempos, coortes, transferências e apoios anteriores permanecem iguais.
+
+Os filtros **Filial (Company)** e **Unidade (Unit)** são combinados com os filtros existentes. Ao escolher Company, o seletor de Unit mostra somente suas unidades. Company sem Unit continua tendo volume, tempos, backlog, categorias e complexidades normalmente. Não exibimos o gráfico de unidades quando a organização não possui nenhuma Unit.
+
+“Chamados por filial” e “Chamados por unidade” usam os **abertos no período**, com quantidade e percentual. Chamados históricos com Company nula entram em **Sem filial**; Unit nula entra em **Sem unidade**. Solicitantes informados manualmente não são excluídos: o JOIN de usuário solicitante e setor é opcional. Setor desconhecido aparece como **Sem setor**, nunca como TI por inferência.
+
+A comparação de filiais mostra abertos no período, resolvidos no período, backlog atual, medianas total/ativa dos resolvidos e categoria mais frequente entre abertos. Empates de categoria são resolvidos por nome; não representam qualidade. As Companies são listadas por volume e nome, sem pontuação. A visão detalhada conserva os filtros ao navegar Company → Unit → categoria → chamados. A consulta paginada utiliza abertos OU resolvidos no período; o link de backlog consulta todos os pendentes atuais, identificado no título.
+
+CSV conserva o recorte de abertos OU resolvidos no período, inclusive quando acessado da consulta de pendências (botão “Exportar período CSV”). Inclui filial, CNPJ normalizado, unidade, registrador, nome atual do solicitante cadastrado, nome manual quando aplicável e **Solicitante**, o snapshot amigável preservado na abertura. Campos sem informação ficam vazios; Company ausente é “Sem filial”. A proteção contra fórmulas abrange todas as colunas.
+
+Nomes de Company/Unit vêm dos cadastros atuais; localização do Ticket pode ser corrigida por TI/ADMIN com evento. Não reconstruímos retroativamente a localização antes de cada correção. O snapshot do solicitante usa o nome na abertura (ou na migração para registros antigos). Dados sem conta têm o mesmo peso operacional dos demais chamados; não existe relatório individual de colaboradores sem acesso.

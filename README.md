@@ -1,6 +1,6 @@
 # Central de Suporte
 
-V1.1 funcional de uma central interna de atendimento de TI, com operação, gestão e indicadores auditáveis. Monólito full-stack local: Next.js 16.3.5, React 19.3, TypeScript strict, Tailwind CSS 4, PostgreSQL 17 e Prisma 7.10. Sem autenticação externa, serviços pagos ou APIs de IA.
+V1.2 funcional de uma central interna de atendimento de TI, com operação, gestão e indicadores auditáveis. Monólito full-stack local: Next.js 16.3.5, React 19.3, TypeScript strict, Tailwind CSS 4, PostgreSQL 17 e Prisma 7.10. Sem autenticação externa, serviços pagos ou APIs de IA.
 
 ## Requisitos
 
@@ -70,7 +70,7 @@ Migrations são aplicadas com `npm run db:migrate`. Para evoluir o schema em des
 
 Fluxo: **NOVO → EM_ATENDIMENTO → AGUARDANDO → EM_ATENDIMENTO → RESOLVIDO**. Também é possível resolver diretamente de EM_ATENDIMENTO ou AGUARDANDO. Espera requer motivo; OUTRO exige detalhes. Reabertura está prevista no enum de auditoria, mas não é oferecida na V1.
 
-Atendimento rápido: busque uma pessoa ativa, selecione, descreva e inicie. Impacto BAIXO vem selecionado e pode ser alterado. Solicitante, setor, técnico, origem e timestamps são persistidos automaticamente.
+Atendimento rápido: escolha uma pessoa cadastrada ou informe somente o nome de quem pediu. Selecione a filial; unidade é opcional e só aparece quando aplicável. Descreva e inicie. Pessoas cadastradas preenchem a localização principal automaticamente, com alteração permitida pelo TI. O modo textual não cria conta nem inventa setor. Impacto BAIXO vem selecionado e pode ser alterado.
 
 Somente o ADMIN cria/edita usuários. A V1 utiliza exclusivamente desativação, mesmo para usuários sem histórico. Chamados antigos mantêm referências válidas. Alterações cadastrais encerram sessões existentes para aplicar permissões imediatamente. ADMIN não pode desativar ou rebaixar a própria conta. Outro ADMIN pode transferir atendimentos de técnicos desativados.
 
@@ -88,18 +88,21 @@ npm run build
 npm run start
 ```
 
-A migration incremental **202609180004_management** adiciona categorias, complexidade opcional, colunas de auditoria e índices. Não recria tabelas existentes nem remove dados. Chamados antigos permanecem sem categoria/complexidade até classificação pelo TI. O seed é idempotente e não muda senhas existentes. **Nunca execute `prisma migrate reset` no banco de aplicação.**
+A migration **202609180004_management** adicionou gestão. A nova migration incremental **202609190001_organization_locations** cria Organization, Company, Unit, permissões adicionais, identidade do solicitante e índices/constraints de isolamento. Não recria tabelas existentes nem remove dados. Todos os dados anteriores são associados à organização inicial. Nenhuma filial real é inventada: usuários e chamados antigos permanecem sem Company até configuração/correção explícita. Antes de novas aberturas, cadastre filiais reais e associe os funcionários. Os históricos continuam acessíveis. O seed é idempotente e não muda senhas existentes. **Nunca execute `prisma migrate reset` no banco de aplicação.**
 
-## Gestão e operação na V1.1
+## Gestão e operação na V1.2
 
 - **Gestão — `/gestor`**: volumes de abertura/resolução, posição atual do backlog, média/mediana e amostra dos tempos, evolução, demanda por setor/categoria/complexidade, espera por motivo e dez pendências mais antigas.
 - **Equipe de TI — `/gestor/equipe`**: lista alfabética paginada, responsabilidade principal, resolução final, apoio histórico, carteira atual, complexidade e tempos de ciclo. Clique no nome para as distribuições e chamados do técnico.
+- **Filiais — `/admin/filiais`**: organização atual, CNPJ validado localmente, criação, edição e ativação/desativação.
+- **Unidades — `/admin/unidades`**: subdivisões físicas opcionais, com filtro por filial.
+- **Gestão de filiais — `/gestor/filiais`**: comparação por volume, resoluções, backlog, tempos e categoria frequente; detalhe com navegação por unidade/categoria até os chamados.
 - **Categorias — `/admin/categorias`**: criar, renomear, ativar e desativar. Categorias inativas permanecem em históricos e relatórios.
 - **Chamado — `/chamados/[id]`**: TI/ADMIN classificam categoria e complexidade; cada alteração gera evento. Funcionários continuam abrindo apenas com descrição e impacto.
 - **Fila — `/chamados`**: filtros todos/novos/meus/aguardando, categoria, setor, impacto e complexidade; busca por número, solicitante e descrição no servidor.
 - **Início do TI**: novos na fila, meus em atendimento, meus aguardando, resolvidos hoje e apoios atuais. Atendimento rápido continua destacado no celular.
 
-Filtros gerenciais combináveis: Hoje, Últimos 7 dias, Últimos 30 dias, Este mês, Mês anterior ou datas personalizadas, setor, técnico, categoria, complexidade e status. URLs conservam filtros e paginação. CSV em **Exportar CSV** usa os mesmos filtros, UTF-8/BOM, `;`, datas UTC e durações em segundos, com proteção contra fórmulas.
+Filtros gerenciais combináveis: filial e unidade dependente, Hoje, Últimos 7 dias, Últimos 30 dias, Este mês, Mês anterior ou datas personalizadas, setor, técnico, categoria, complexidade e status. URLs conservam filtros e paginação. CSV em **Exportar CSV** usa os mesmos filtros, UTF-8/BOM, `;`, datas UTC e durações em segundos, com proteção contra fórmulas.
 
 **Leia [docs/metrics.md](docs/metrics.md) para as definições exatas.** Aberturas usam `createdAt`; resoluções usam `resolvedAt`; backlog é sempre atual e não é limitado pelo período. A primeira resposta é o primeiro evento ASSUMIDO. Tempo ativo de ciclo soma intervalos EM_ATENDIMENTO, excluindo NOVO e AGUARDANDO; não é hora trabalhada. Apoios e participações principais são distintos; só o responsável final recebe uma resolução. Ciclos sem histórico suficiente não recebem tempos inventados.
 
@@ -111,7 +114,7 @@ Todos os caminhos (criação, redefinição, primeiro login e alteração volunt
 
 ### Demonstração separada, opcional
 
-Para visualizar os indicadores com 54 chamados fictícios em diferentes períodos, categorias, complexidades, esperas, apoios e quatro técnicos (um inativo):
+Para visualizar os indicadores com 60 chamados fictícios em diferentes períodos, categorias, complexidades, esperas, apoios e quatro técnicos (um inativo):
 
 ```bash
 npm run demo:setup
@@ -119,7 +122,7 @@ npm run build
 npm run demo:start
 ```
 
-Abra **http://localhost:3002**. O comando cria **somente `central_suporte_demo`**, separado do banco real, e `.env.demo` ignorado pelo Git. Pode coexistir com a aplicação na porta 3000. Não use esse seed em produção. As proteções exigem banco com sufixo `_demo` e `SEED_DEMO=true`.
+Abra **http://localhost:3002**. O comando cria **somente `central_suporte_demo`**, separado do banco real, e `.env.demo` ignorado pelo Git. Pode coexistir com a aplicação na porta 3000. O setup atualiza a demonstração existente sem redefinir senhas: quatro filiais, duas sem unidades e duas com duas unidades cada; seis atendimentos rápidos adicionais incluem pessoas sem conta. CNPJs são sintéticos com verificadores válidos, sem consultas externas. Não use esse seed em produção. As proteções exigem banco com sufixo `_demo` e `SEED_DEMO=true`.
 
 - ADMIN: `demo.admin`; senha inicial em `INITIAL_ADMIN_PASSWORD` de `.env.demo`.
 - GESTOR: `demo.gestor`.
@@ -129,12 +132,16 @@ Abra **http://localhost:3002**. O comando cria **somente `central_suporte_demo`*
 
 ## Modelo de dados
 
-- **User**: nome, username único normalizado, hash de senha, setor, perfil, estado, troca obrigatória e timestamps.
+- **Organization**: grupo/cliente da instalação, estado e timestamps.
+- **Company**: CNPJ/pessoa jurídica, chamada Filial, com nome de exibição, razão social opcional, estado e timestamps.
+- **Unit**: subdivisão física opcional da Company, nome, código e estado.
+- **UserCompanyAccess / UserUnitAccess**: permissões adicionais normalizadas.
+- **User**: organização, Company principal, Unit opcional, nome, username único normalizado, hash de senha, setor, perfil, estado, troca obrigatória e timestamps.
 - **Department**: cadastro próprio, nome único e estado; preparado para administração futura.
 - **Session**: hash do token, usuário, criação e expiração absoluta de 8 horas.
 - **LoginThrottle**: contador persistente por username; máximo de 10 tentativas por janela de 15 minutos. Entrar com sucesso limpa o contador.
 - **Category**: nome único (também normalizado no banco), ativa/inativa e data de criação; referências históricas restritivas.
-- **Ticket**: categoria e complexidade opcionais, número sequencial, descrição, impacto, solicitante, setor na abertura, responsável principal, status, origem, motivo/detalhe de espera, criação/início/resolução.
+- **Ticket**: organização, Company, Unit opcional, registrador, solicitante User opcional e snapshot do nome; categoria e complexidade opcionais, número sequencial, descrição, impacto, solicitante, setor na abertura, responsável principal, status, origem, motivo/detalhe de espera, criação/início/resolução.
 - **TicketParticipant**: relação normalizada de apoios, com unicidade por chamado/técnico.
 - **TicketEvent**: ator, técnico de destino, tipo, status anterior/novo, categoria/complexidade anterior/nova, motivo, nota, metadata auxiliar, timestamp e sequência de ordenação.
 - **TicketComment**: autor, conteúdo, chamado e horário.
@@ -171,7 +178,7 @@ Os testes criam um **banco temporário exclusivo** no mesmo PostgreSQL, aplicam 
 
 `npm run test:e2e`: inicia build de produção na porta 3100, executa o cenário real pelo navegador (desktop e viewport mobile), valida área administrativa, GESTOR, timeline, manifest, ícones, cabeçalhos e rejeição de POST de outra origem. Também executa axe para regras WCAG A/AA nas telas de login, administração, funcionário, detalhe resolvido e atendimento rápido, panorama, equipe e detalhes gerenciais. Valida classificação técnica, filtros e CSV no navegador. Usa Chrome local quando encontrado. Caso contrário, instale apenas o navegador de teste com `npx playwright install chromium`. Screenshots e traces de falhas ficam em `test-results/`.
 
-Validação da entrega: **40 testes de integração e 2 testes E2E aprovados**, lint sem avisos, TypeScript sem erros, build de produção aprovado e auditoria npm sem vulnerabilidades conhecidas. As verificações automáticas de acessibilidade não substituem uma avaliação manual completa com tecnologias assistivas.
+Validação da entrega: **65 testes de integração e 2 testes E2E aprovados**, lint sem avisos, TypeScript sem erros, build de produção aprovado e auditoria npm sem vulnerabilidades conhecidas. As verificações automáticas de acessibilidade não substituem uma avaliação manual completa com tecnologias assistivas.
 
 `npm audit` verifica dependências. Overrides de deepmerge-ts 8.0.2 e mysql2 3.24.4 corrigem avisos transitivos do Prisma CLI, validados com generate/migrations/testes/build.
 
@@ -190,11 +197,15 @@ src/lib/auth-service.ts  Hash, login, sessões, expiração e senha
 src/lib/auth.ts          Proteção das páginas/actions
 src/lib/services.ts      Regras, permissões, transações e auditoria
 src/lib/validation.ts    Schemas de entrada
+src/lib/access.ts        Ator autenticado e organização ativa
+src/lib/organization-service.ts  Filiais, unidades e permissões de localização
+src/lib/cnpj.ts          Normalização e validação local de CNPJ
 src/lib/analytics-*.ts   Consultas parametrizadas e agregações PostgreSQL
 src/lib/period.ts        Datas civis e filtros de período
 src/lib/config.ts        Configuração central de timezone
 src/lib/csv.ts           Serialização segura da exportação
 docs/metrics.md          Contrato e limitações dos indicadores
+docs/organization-model.md  Modelo organizacional, identidade e migração
 src/components/         Formulários acessíveis e componentes visuais
 prisma/                  Schema, migrations e bootstrap
 scripts/                 Configuração segura e execução isolada de testes
@@ -203,10 +214,22 @@ public/                  Ícones e service worker sem cache privado
 AGENTS.md                Regras para manutenção por futuros agentes
 ```
 
-Decisões: componentes locais pequenos em vez de uma dependência completa de UI; fontes do sistema sem requests externos; datas UTC com exibição no APP_TIMEZONE; paginação de chamados, equipe e comentários em 20 e eventos em 30 registros. Gráficos SVG/CSS com tabela acessível, sem biblioteca adicional. Dev/build usam Webpack, opção estável do Next.js 16, porque o Turbopack não conseguiu abrir uma porta interna de processamento de CSS no ambiente restrito de desenvolvimento. A busca de pessoas carrega a lista ativa no servidor nesta V1; busca paginada no banco pode ser adotada se o cadastro crescer muito. Não há atualização em tempo real: a página é atualizada após ações próprias; para ver alterações de outro usuário, recarregue.
+Decisões: componentes locais pequenos em vez de uma dependência completa de UI; fontes do sistema sem requests externos; datas UTC com exibição no APP_TIMEZONE; paginação de chamados, equipe e comentários em 20 e eventos em 30 registros. Gráficos SVG/CSS com tabela acessível, sem biblioteca adicional. Dev/build usam Webpack, opção estável do Next.js 16, porque o Turbopack não conseguiu abrir uma porta interna de processamento de CSS no ambiente restrito de desenvolvimento. A busca de pessoas acontece no servidor, limitada a 15 resultados por consulta e ao escopo da organização. Refine nome/setor para localizar uma pessoa. Não há atualização em tempo real: a página é atualizada após ações próprias; para ver alterações de outro usuário, recarregue.
 
 ## Limitações deliberadas
 
 Não há ranking, score, horas individuais, percentual de utilização, SLA, custo, jornada ou indicação automática de sobrecarga: faltam dados confiáveis para calculá-los. O backlog, as esperas e a complexidade dão contexto para análise humana. Classificações/status são os atuais, mesmo quando o período é passado; não há reconstrução histórica desses filtros. GESTOR consulta dados gerenciais e exporta, mas o detalhe operacional permanece reservado ao TI/ADMIN e ao solicitante autorizado.
 
 Exportações usam snapshot consistente e lotes de 500, com timeout de dois minutos; intervalos grandes podem exigir uma seleção menor. A disponibilidade de métricas depende dos eventos preservados. O sistema continua sem push, notificações externas, reabertura ou atualização em tempo real.
+
+## Organização e solicitantes
+
+Veja [docs/organization-model.md](docs/organization-model.md) para o contrato completo. A estrutura é **Organization → Company → Unit opcional**. A instalação tem uma única organização, definida pelo servidor em `APP_ORGANIZATION_ID` (padrão `initial-organization`), sem escolha de tenant no login. O login agora contém somente o formulário central com usuário, senha e Entrar.
+
+No cadastro de funcionário, informe a filial principal; setor permanece obrigatório e unidade é opcional. Companies adicionais e restrições de Units ficam em uma seção expansível. TI atende todas as filiais da organização. Com uma única Company autorizada, o funcionário não recebe seletor na abertura.
+
+`openedByUserId` identifica quem registrou. `requesterId` mantém a relação opcional com o solicitante cadastrado, e `requesterName` preserva o nome no momento da abertura. Sem conta, basta informar um nome no Atendimento Rápido e escolher filial. Busca, histórico, métricas e CSV incluem esses chamados normalmente.
+
+CSV inclui filial/CNPJ/unidade, registrador, solicitante cadastrado, nome manual e a identificação amigável preservada. Todos os filtros e consultas são limitados à organização autenticada, e o banco rejeita relacionamentos entre organizações. Os testes também aplicam a migration sobre registros no formato V1 para verificar preservação.
+
+Decisões explícitas: usernames e números de chamados continuam globalmente únicos; `requesterId` mantém seu nome anterior e equivale a requesterUserId. A Company de uma Unit é imutável após sua criação para preservar a localização histórica. Campos Company e openedBy podem ser nulos em registros legados sem informação confiável; novas aberturas exigem ambos. Não foi implementado SaaS comercial, troca de organização, notificações ou push.

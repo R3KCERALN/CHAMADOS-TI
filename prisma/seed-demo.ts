@@ -1,13 +1,18 @@
 import 'dotenv/config';
+import { randomInt } from 'node:crypto';
+import { APP_ORGANIZATION_ID } from '../src/lib/config';
+import { validCnpj } from '../src/lib/cnpj';
 import { db } from '../src/lib/db';
 import { hashPassword } from '../src/lib/auth-service';
 import type {
   Role,
+  Company,
   TicketStatus,
   Complexity,
   WaitingReason,
   Prisma,
 } from '../src/generated/prisma/client';
+const organizationId = APP_ORGANIZATION_ID;
 async function main() {
   const name = new URL(process.env.DATABASE_URL!).pathname.slice(1);
   if (process.env.SEED_DEMO !== 'true' || !name.endsWith('_demo'))
@@ -16,12 +21,21 @@ async function main() {
     );
   if (!process.env.DEMO_PASSWORD) throw new Error('Configure DEMO_PASSWORD.');
   if (await db.user.findUnique({ where: { username: 'demo.gestor' } })) {
-    console.log('Demonstração já existente; nenhum dado foi recriado.');
+    await addLocations();
+    console.log(
+      'Demonstração organizacional atualizada sem recriar contas ou chamados existentes.',
+    );
     return;
   }
   const hash = await hashPassword(process.env.DEMO_PASSWORD);
-  const departments = await db.department.findMany({ orderBy: { name: 'asc' } });
-  const categories = await db.category.findMany({ orderBy: { name: 'asc' } });
+  const departments = await db.department.findMany({
+    where: { organizationId },
+    orderBy: { name: 'asc' },
+  });
+  const categories = await db.category.findMany({
+    where: { organizationId },
+    orderBy: { name: 'asc' },
+  });
   const ti = departments.find((d) => d.name === 'TI')!;
   const people = [
     ['demo.gestor', 'Gestora demonstração', 'GESTOR'],
@@ -39,6 +53,7 @@ async function main() {
     users.push(
       await db.user.create({
         data: {
+          organizationId,
           username,
           name,
           role: role as Role,
@@ -78,6 +93,9 @@ async function main() {
     const ticket = await db.ticket.create({
       data: {
         description: `Demonstração ${i + 1}: ${category?.name || 'Solicitação em análise'} — atendimento do setor.`,
+        organizationId,
+        requesterName: requester.name,
+        openedByUserId: requester.id,
         requesterId: requester.id,
         departmentId: departments[i % departments.length].id,
         impact: (['BLOQUEADO', 'PARCIAL', 'BAIXO'] as const)[i % 3],
@@ -159,10 +177,147 @@ async function main() {
       ),
     });
   }
+  await addLocations();
   console.log(
     'Demonstração criada em banco separado: 54 chamados, 4 técnicos (1 inativo), 3 funcionários e 1 gestor. Senha: DEMO_PASSWORD do .env.demo; troca obrigatória.',
   );
 }
+async function addLocations() {
+  await db.organization.update({
+    where: { id: organizationId },
+    data: { name: 'Grupo Demonstração' },
+  });
+  const companies: Company[] = [];
+  for (const direction of ['Norte', 'Sul', 'Leste', 'Oeste']) {
+    let company = await db.company.findFirst({
+      where: { organizationId, displayName: `Filial ${direction}` },
+    });
+    if (!company) {
+      const base = String(randomInt(10000000, 99999999)) + '0001';
+      const cnpj = Array.from({ length: 100 }, (_, i) => base + String(i).padStart(2, '0')).find(
+        validCnpj,
+      )!;
+      company = await db.company.create({
+        data: {
+          organizationId,
+          displayName: `Filial ${direction}`,
+          legalName: `Empresa Fictícia ${direction} — Demonstração`,
+          cnpj,
+        },
+      });
+    }
+    companies.push(company);
+  }
+  for (const [i, names] of [
+    [1, ['Matriz', 'Depósito']],
+    [2, ['Loja Centro', 'Centro de Distribuição']],
+  ] as const) {
+    for (const name of names)
+      await db.unit.upsert({
+        where: { companyId_name: { companyId: companies[i].id, name } },
+        create: { companyId: companies[i].id, name },
+        update: {},
+      });
+  }
+  const units = await db.unit.findMany({
+    where: { companyId: { in: companies.map((c) => c.id) } },
+    orderBy: { name: 'asc' },
+  });
+  const users = await db.user.findMany({
+    where: { organizationId, username: { startsWith: 'demo.' } },
+    orderBy: { username: 'asc' },
+  });
+  for (const [i, user] of users.entries())
+    if (!user.primaryCompanyId) {
+      const company = companies[i % 4];
+      await db.user.update({
+        where: { id: user.id },
+        data: {
+          primaryCompanyId: company.id,
+          primaryUnitId: units.find((u) => u.companyId === company.id)?.id || null,
+        },
+      });
+    }
+  const tickets = await db.ticket.findMany({
+    where: { organizationId, description: { startsWith: 'Demonstração ' }, companyId: null },
+    orderBy: { number: 'asc' },
+  });
+  for (const [i, t] of tickets.entries())
+    await db.ticket.update({
+      where: { id: t.id },
+      data: {
+        companyId: companies[i % 4].id,
+        unitId: units.find((u) => u.companyId === companies[i % 4].id)?.id || null,
+      },
+    });
+  const tech = users.find((u) => u.username === 'demo.carlos')!;
+  const requester = users.find((u) => u.username === 'demo.ana')!;
+  for (let i = 0; i < 6; i++) {
+    const id = `demo-quick-location-${i}`;
+    if (await db.ticket.findUnique({ where: { id } })) continue;
+    const manual = i < 3,
+      resolved = i % 2 === 0;
+    const createdAt = new Date(Date.now() - (i + 1) * 86400000);
+    const resolvedAt = resolved ? new Date(createdAt.getTime() + 3600000) : null;
+    await db.$transaction(async (tx) => {
+      await tx.ticket.create({
+        data: {
+          id,
+          organizationId,
+          openedByUserId: tech.id,
+          requesterId: manual ? null : requester.id,
+          requesterName: manual
+            ? ['João - Reposição', 'Marcos - Caixa', 'Ana - Estoque'][i]
+            : requester.name,
+          departmentId: manual ? null : requester.departmentId,
+          companyId: companies[i % 4].id,
+          unitId: units.find((u) => u.companyId === companies[i % 4].id)?.id || null,
+          description: manual
+            ? 'Atendimento informal: impressora não responde.'
+            : 'Atendimento rápido registrado para pessoa cadastrada.',
+          impact: 'PARCIAL',
+          origin: 'ATENDIMENTO_RAPIDO',
+          status: resolved ? 'RESOLVIDO' : 'EM_ATENDIMENTO',
+          assigneeId: tech.id,
+          createdAt,
+          startedAt: createdAt,
+          resolvedAt,
+        },
+      });
+      await tx.ticketEvent.create({
+        data: {
+          ticketId: id,
+          actorId: tech.id,
+          type: 'CRIADO',
+          toStatus: 'EM_ATENDIMENTO',
+          createdAt,
+        },
+      });
+      await tx.ticketEvent.create({
+        data: {
+          ticketId: id,
+          actorId: tech.id,
+          targetUserId: tech.id,
+          type: 'ASSUMIDO',
+          toStatus: 'EM_ATENDIMENTO',
+          createdAt,
+        },
+      });
+      if (resolved)
+        await tx.ticketEvent.create({
+          data: {
+            ticketId: id,
+            actorId: tech.id,
+            type: 'RESOLVIDO',
+            fromStatus: 'EM_ATENDIMENTO',
+            toStatus: 'RESOLVIDO',
+            createdAt: resolvedAt!,
+          },
+        });
+    });
+  }
+}
+
 main()
   .catch((e) => {
     console.error(e instanceof Error ? e.message : 'Falha no seed demo');

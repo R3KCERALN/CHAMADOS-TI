@@ -1,4 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
+import { syntheticCnpj } from '../fixtures';
 import { mkdir } from 'node:fs/promises';
 import AxeBuilder from '@axe-core/playwright';
 const temporary = '123456';
@@ -7,7 +8,7 @@ async function login(page: Page, username: string, password: string) {
   await page.goto('/login');
   await page.getByLabel('Usuário', { exact: true }).fill(username);
   await page.getByLabel('Senha', { exact: true }).fill(password);
-  await page.getByRole('button', { name: 'Entrar na Central' }).click();
+  await page.getByRole('button', { name: 'Entrar', exact: true }).click();
   // Server Actions navigate asynchronously; wait for the authenticated destination before goto.
   await expect(page).not.toHaveURL(/\/login(?:\?.*)?$/);
 }
@@ -34,6 +35,10 @@ async function createUser(page: Page, name: string, username: string, role: stri
     .getByLabel('Setor', { exact: true })
     .selectOption({ label: role === 'TI' ? 'TI' : 'Financeiro' });
   await page.getByLabel('Perfil de acesso').selectOption(role);
+  if (role === 'FUNCIONARIO')
+    await page
+      .getByLabel('Filial (opcional)', { exact: true })
+      .selectOption({ label: 'E2E Castanhal' });
   await page.getByLabel('Senha temporária', { exact: true }).fill(temporary);
   await page.getByRole('button', { name: 'Criar usuário', exact: true }).click();
   await expect(page.getByRole('status')).toContainText('Usuário criado');
@@ -59,7 +64,27 @@ test('cenário completo no navegador: admin, funcionário, TI, histórico e aten
   await expect(page).toHaveURL(/\/login$/);
   await page.screenshot({ path: 'test-results/screenshots/login-desktop.png', fullPage: true });
   await accessible(page);
+  await expect(page.locator('.login-story')).toHaveCount(0);
+  await expect(
+    page.getByRole('heading', { name: 'Central de Suporte', exact: true }),
+  ).toBeVisible();
   await firstLogin(page, process.env.INITIAL_ADMIN_USERNAME!, process.env.INITIAL_ADMIN_PASSWORD!);
+  await page.goto('/admin/filiais');
+  await expect(page.getByText(/Organização atual:/)).toBeVisible();
+  for (const name of ['E2E Castanhal', 'E2E Belém']) {
+    const form = page.locator('form').filter({ has: page.locator('#display-new') });
+    await form.getByLabel('Nome de exibição').fill(name);
+    await form.getByLabel('CNPJ', { exact: true }).fill(syntheticCnpj());
+    await form.getByRole('button', { name: 'Criar filial', exact: true }).click();
+    await expect(page.getByRole('heading', { name, exact: true })).toBeVisible();
+  }
+  await accessible(page);
+  await page.goto('/admin/unidades');
+  await page.getByLabel('Filial', { exact: true }).selectOption({ label: 'E2E Belém' });
+  await page.getByLabel('Nome da unidade', { exact: true }).fill('Depósito E2E');
+  await page.getByRole('button', { name: 'Criar unidade', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Depósito E2E', exact: true })).toBeVisible();
+  await accessible(page);
   await page.goto('/admin/categorias');
   await page.getByLabel('Nome da categoria', { exact: true }).fill('E2E Rede');
   await page.getByRole('button', { name: 'Criar categoria', exact: true }).click();
@@ -87,7 +112,9 @@ test('cenário completo no navegador: admin, funcionário, TI, histórico e aten
   await page.screenshot({ path: 'test-results/screenshots/employee-mobile.png', fullPage: true });
   await page.goto('/admin/usuarios');
   await expect(page.getByRole('heading', { name: 'Não encontramos este registro.' })).toBeVisible();
+  expect((await page.request.get('/api/pessoas')).status()).toBe(403);
   await page.goto('/chamados/novo');
+  await expect(page.getByLabel('Onde está o problema?')).toHaveCount(0);
   await page
     .getByLabel('O que aconteceu?')
     .fill('Não consigo abrir o sistema financeiro para concluir os pagamentos.');
@@ -169,6 +196,32 @@ test('cenário completo no navegador: admin, funcionário, TI, histórico e aten
   await expect(page.locator('.ticket-facts')).toContainText('Ana Financeiro');
   await expect(page.locator('.page-heading .eyebrow')).toContainText('ATENDIMENTO RÁPIDO');
   await logout(page);
+  await login(page, 'bruno.ti', finalPassword);
+  await page.goto('/atendimento-rapido');
+  await page.getByRole('button', { name: 'Informar nome', exact: true }).click();
+  await page.getByLabel('Nome de quem pediu').fill('João - Reposição');
+  await page.getByLabel('Filial', { exact: true }).selectOption({ label: 'E2E Belém' });
+  await page
+    .getByLabel('Unidade (opcional)', { exact: true })
+    .selectOption({ label: 'Depósito E2E' });
+  await page.getByLabel('O que está sendo atendido?').fill('Coletor não conecta no Wi-Fi.');
+  await accessible(page);
+  await noOverflow(page);
+  await page.screenshot({
+    path: 'test-results/screenshots/quick-manual-mobile.png',
+    fullPage: true,
+  });
+  await page.getByRole('button', { name: 'Iniciar atendimento', exact: true }).click();
+  await expect(page.locator('.ticket-facts')).toContainText('João - Reposição');
+  await expect(page.locator('.ticket-facts')).toContainText('E2E Belém');
+  await expect(page.locator('.ticket-facts')).toContainText('Registrado por');
+  await expect(page.locator('.timeline')).toContainText(
+    'Atendimento rápido registrado por Bruno Técnico',
+  );
+  expect(await (await page.request.get('/api/pessoas?q=João')).json()).toEqual([]);
+  await page.goto('/chamados?q=João%20-%20Reposição');
+  await expect(page.locator('.ticket-row')).toContainText('João - Reposição');
+  await logout(page);
   await firstLogin(page, 'gustavo.gestor', temporary);
   await expect(page.getByRole('heading', { name: 'Panorama do suporte' })).toBeVisible();
   await page.goto('/admin/usuarios');
@@ -204,9 +257,42 @@ test('cenário completo no navegador: admin, funcionário, TI, histórico e aten
     fullPage: true,
   });
   const detailUrl = page.url();
+  await page.goto('/gestor/filiais');
+  await page.getByRole('link', { name: 'E2E Belém', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'E2E Belém', exact: true })).toBeVisible();
+  await page
+    .getByLabel('Unidade', { exact: true })
+    .selectOption({ label: 'Depósito E2E — E2E Belém' });
+  await page.getByRole('button', { name: 'Aplicar filtros', exact: true }).click();
+  await accessible(page);
+  await page.getByRole('link', { name: 'Consultar chamados', exact: true }).click();
+  await expect(page.locator('table')).toContainText('João - Reposição');
+  const locationCsv = await page
+    .getByRole('link', { name: 'Exportar período CSV', exact: true })
+    .getAttribute('href');
+  const exportResult = await page.request.get(locationCsv!);
+  expect(exportResult.status()).toBe(200);
+  const contents = await exportResult.text();
+  expect(contents).toContain('E2E Belém');
+  expect(contents).toContain('João - Reposição');
+  expect(contents).toContain('Bruno Técnico');
+  expect(contents).toContain('Registrado por');
+  await page.screenshot({
+    path: 'test-results/screenshots/location-report-desktop.png',
+    fullPage: true,
+  });
+
   await logout(page);
   await login(page, 'bruno.ti', finalPassword);
-  for (const path of ['/gestor', '/gestor/equipe', detailUrl]) {
+  for (const path of [
+    '/gestor',
+    '/gestor/equipe',
+    '/gestor/filiais',
+    '/gestor/chamados',
+    '/admin/filiais',
+    '/admin/unidades',
+    detailUrl,
+  ]) {
     await page.goto(path);
     await expect(
       page.getByRole('heading', { name: 'Não encontramos este registro.' }),

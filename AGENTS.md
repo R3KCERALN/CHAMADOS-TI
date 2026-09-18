@@ -4,13 +4,13 @@
 
 - Monólito Next.js 16 App Router + React + TypeScript strict, PostgreSQL 17, Prisma 7 com adapter-pg, npm e Tailwind 4.
 - Sistema corporativo fechado. Não adicionar signup, autenticação externa, SaaS, IA, Supabase, Firebase ou microserviços.
-- A V1.1 inclui gestão e métricas conforme docs/metrics.md. Push, offline, inventário, IA, pontuação, ranking e integrações continuam fora do escopo.
+- A V1.2 inclui organização, localizações, solicitantes sem conta, gestão e métricas conforme docs/metrics.md. Push, offline, inventário, IA, pontuação, ranking e integrações continuam fora do escopo.
 - Não fazer deploy externo sem pedido. O projeto usa execução local e Docker Compose apenas para o banco.
 - Dev/build usam Webpack por compatibilidade com o ambiente restrito (o Turbopack requer uma porta interna indisponível aqui). Isso não altera o App Router nem a arquitetura.
 
 ## Segurança e acesso
 
-- A autorização real fica no servidor. `src/lib/auth.ts` valida sessões nas páginas/actions e `src/lib/services.ts` relê o ator no banco para cada operação.
+- A autorização real fica no servidor. `src/lib/auth.ts` valida sessões nas páginas/actions e `src/lib/access.ts` relê o ator no banco para cada operação.
 - Nunca aceitar role, autor, setor de abertura ou técnico principal do cliente como fonte de autorização. IDs recebidos devem passar pelas regras do serviço.
 - FUNCIONARIO só lê/comenta os próprios chamados. TI/ADMIN veem a fila; apenas responsável principal ou ADMIN alteram status, apoio e responsável. GESTOR tem relatórios e CSV, mas não acessa detalhes operacionais de chamados. Somente ADMIN/GESTOR podem acessar /gestor e suas consultas/exportações. TI não acessa indicadores de colegas.
 - Todas as mutações web são Server Actions com verificação explícita de Origin contra APP_URL, além da proteção do Next.js. Não criar mutações GET.
@@ -59,6 +59,21 @@
 - CSV autentica e autoriza, neutraliza fórmulas e usa paginação por chave em snapshot repeatable-read.
 - Dados fictícios apenas em central_suporte_demo com SEED_DEMO=true e .env.demo ignorado. Nunca popular banco real com seed de demonstração.
 - Senhas/PINs de 6–128 caracteres são decisão explícita do usuário; não exigir apenas números nem restaurar mínimo 12.
+
+## Organização e localizações
+
+- Leia docs/organization-model.md antes de alterar escopo, identidade do solicitante ou permissões de localização.
+- Toda entidade principal possui organizationId explícito. Derive o valor do ator autenticado; nunca aceite tenant do cliente. Todas as consultas sensíveis, inclusive opções, contadores, SQL analítico e CSV, devem restringir organização.
+- Login/sessão usam APP_ORGANIZATION_ID do servidor e rejeitam organização inativa. Não adicionar troca de tenant ou SaaS comercial. Username e número de chamado mantêm unicidade global nesta instalação.
+- Preservar triggers de integridade organizacional e imutabilidade da Company de Unit. Não duplicar organizationId em filhos quando o escopo é derivado e protegido.
+- Company é CNPJ, Unit é local físico opcional. Company pode não ter Units. Labels da interface em organization-labels.ts.
+- CNPJ numérico normalizado, 14 dígitos e verificadores locais. Unicidade dentro da Organization; nenhuma API externa.
+- FUNCIONARIO usa Company principal/adicionais e Units autorizadas. TI atende toda a organização. Validar a combinação Company/Unit no servidor.
+- Novos chamados sempre gravam openedByUserId e requesterName. requesterId é opcional. Não criar User fictício; setor manual desconhecido é null.
+- requesterName é snapshot: não alterar ao editar nome do User. Não presumir Company ou autoria de registros antigos; nullable histórico é deliberado.
+- Atendimento Rápido textual requer Company explícita. Não sugerir Company por nome nem atribuir setor do TI ao solicitante.
+- Métricas precisam de LEFT JOIN para solicitante/setor opcionais, mantendo Sem filial/Sem unidade/Sem setor. Preservar as definições de tempos existentes.
+- Filiais/unidades somente desativadas; não apagar histórico. Demo adiciona localizações apenas ao banco separado e preserva contas/senhas.
 
 <!-- BEGIN:nextjs-agent-rules -->
 
