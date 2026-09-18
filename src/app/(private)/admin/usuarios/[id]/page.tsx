@@ -49,7 +49,7 @@ export default async function EditUserPage({ params }: { params: Promise<{ id: s
               id="temporaryPassword"
               name="password"
               type="password"
-              minLength={12}
+              minLength={6}
               maxLength={128}
               autoComplete="new-password"
               required

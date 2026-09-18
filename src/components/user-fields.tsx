@@ -86,13 +86,13 @@ export function UserFields({
             id="password"
             name="password"
             type="password"
-            minLength={12}
+            minLength={6}
             maxLength={128}
             required
             autoComplete="new-password"
           />
           <p className="field-hint">
-            Mínimo de 12 caracteres. A troca será obrigatória no primeiro login.
+            Mínimo de 6 caracteres. A troca será obrigatória no primeiro login.
           </p>
         </div>
       )}

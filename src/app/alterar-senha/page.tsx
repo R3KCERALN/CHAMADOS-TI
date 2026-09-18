@@ -36,11 +36,11 @@ export default async function PasswordPage() {
               name="password"
               type="password"
               autoComplete="new-password"
-              minLength={12}
+              minLength={6}
               maxLength={128}
               required
             />
-            <p className="field-hint">Pelo menos 12 caracteres. Você precisará entrar novamente.</p>
+            <p className="field-hint">Pelo menos 6 caracteres. Você precisará entrar novamente.</p>
           </div>
           <div className="field">
             <label htmlFor="confirmation">Confirme a nova senha</label>
@@ -49,7 +49,7 @@ export default async function PasswordPage() {
               name="confirmation"
               type="password"
               autoComplete="new-password"
-              minLength={12}
+              minLength={6}
               maxLength={128}
               required
             />

@@ -8,7 +8,7 @@ export const usernameSchema = z
   .regex(/^[a-z0-9._-]+$/, 'Use letras sem acento, números, ponto, hífen ou sublinhado.');
 export const passwordSchema = z
   .string()
-  .min(12, 'Use uma senha com pelo menos 12 caracteres.')
+  .min(6, 'Use uma senha com pelo menos 6 caracteres.')
   .max(128, 'Use no máximo 128 caracteres.');
 export const userSchema = z.object({
   name: z.string().trim().min(2, 'Informe o nome completo.').max(100),
