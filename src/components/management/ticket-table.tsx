@@ -1,14 +1,17 @@
 import Link from 'next/link';
+import { organizationLabels as labels } from '@/lib/organization-labels';
 import { formatDate, ticketNumber, complexityLabels, statusLabels } from '@/lib/labels';
 import { formatDuration, type MetricTicket } from '@/lib/analytics-service';
 export function ManagementTicketTable({
   rows,
   canOpen,
   participation = false,
+  dates = false,
 }: {
   rows: MetricTicket[];
   canOpen: boolean;
   participation?: boolean;
+  dates?: boolean;
 }) {
   return (
     <div className="table-scroll">
@@ -17,10 +20,13 @@ export function ManagementTicketTable({
           <tr>
             <th>Chamado</th>
             <th>Solicitante / setor</th>
+            <th>
+              {labels.company} / {labels.unit}
+            </th>
             <th>Categoria / complexidade</th>
             <th>Status</th>
             <th>Criado em</th>
-            <th>{participation ? 'Resolvido em' : 'Idade atual'}</th>
+            <th>{participation || dates ? 'Resolvido em' : 'Idade atual'}</th>
             {participation && <th>Participação no período</th>}
           </tr>
         </thead>
@@ -41,6 +47,10 @@ export function ManagementTicketTable({
                 <small>{t.department}</small>
               </td>
               <td>
+                {t.company || labels.noCompany}
+                <small>{t.unit || '—'}</small>
+              </td>
+              <td>
                 {t.category || 'Sem categoria'}
                 <small>
                   {t.complexity
@@ -51,7 +61,7 @@ export function ManagementTicketTable({
               <td>{statusLabels[t.status as keyof typeof statusLabels]}</td>
               <td>{formatDate(new Date(t.createdAt))}</td>
               <td>
-                {participation
+                {participation || dates
                   ? t.resolvedAt
                     ? formatDate(new Date(t.resolvedAt))
                     : '—'

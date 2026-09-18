@@ -1,10 +1,24 @@
+import { UserLocationFields } from './user-location-fields';
+import type { LocationCompany } from './location-fields';
 import { roleLabels } from '@/lib/labels';
 export function UserFields({
   departments,
+  companies,
   user,
 }: {
   departments: { id: string; name: string }[];
-  user?: { name: string; username: string; role: string; departmentId: string; active: boolean };
+  companies: LocationCompany[];
+  user?: {
+    name: string;
+    username: string;
+    role: string;
+    departmentId: string;
+    active: boolean;
+    primaryCompanyId: string | null;
+    primaryUnitId: string | null;
+    companyAccess?: { companyId: string }[];
+    unitAccess?: { unitId: string }[];
+  };
 }) {
   return (
     <>
@@ -68,6 +82,7 @@ export function UserFields({
           </select>
         </div>
       </div>
+      <UserLocationFields companies={companies} user={user} />
       {user ? (
         <div className="field">
           <label htmlFor="active">Situação do acesso</label>

@@ -6,6 +6,8 @@ import { TicketList } from '@/components/tickets';
 import { Pagination } from '@/components/pagination';
 import { redirect } from 'next/navigation';
 import { db } from '@/lib/db';
+import { locationOptions } from '@/lib/organization-service';
+import { LocationFilter } from '@/components/location-fields';
 import { queryString, param, type SearchParams } from '@/lib/period';
 import { complexityLabels, impactLabels } from '@/lib/labels';
 export default async function TicketsPage({
@@ -29,7 +31,10 @@ export default async function TicketsPage({
     ? param(params, 'filtro')
     : 'todos';
   const fields = Object.fromEntries(
-    ['categoryId', 'departmentId', 'impact', 'complexity', 'q'].map((k) => [k, param(params, k)]),
+    ['companyId', 'unitId', 'categoryId', 'departmentId', 'impact', 'complexity', 'q'].map((k) => [
+      k,
+      param(params, k),
+    ]),
   );
   const { tickets, total, page } = await listTickets(
     user.id,
@@ -40,9 +45,18 @@ export default async function TicketsPage({
   const options = employee
     ? null
     : await Promise.all([
-        db.category.findMany({ orderBy: { name: 'asc' }, select: { id: true, name: true } }),
-        db.department.findMany({ orderBy: { name: 'asc' }, select: { id: true, name: true } }),
+        db.category.findMany({
+          where: { organizationId: user.organizationId },
+          orderBy: { name: 'asc' },
+          select: { id: true, name: true },
+        }),
+        db.department.findMany({
+          where: { organizationId: user.organizationId },
+          orderBy: { name: 'asc' },
+          select: { id: true, name: true },
+        }),
       ]);
+  const companies = employee ? [] : await locationOptions(user.id, false);
   return (
     <>
       <div className="page-heading">
@@ -93,6 +107,13 @@ export default async function TicketsPage({
               />
             </div>
             <div className="filter-grid">
+              <LocationFilter
+                companies={companies}
+                company={fields.companyId}
+                unit={fields.unitId}
+                companyName="companyId"
+                unitName="unitId"
+              />
               <div className="field">
                 <label htmlFor="categoryId">Categoria</label>
                 <select id="categoryId" name="categoryId" defaultValue={fields.categoryId}>

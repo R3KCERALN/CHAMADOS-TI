@@ -12,6 +12,10 @@ import {
 import { requireUser } from '@/lib/auth';
 import { getTicket } from '@/lib/services';
 import { db } from '@/lib/db';
+import { locationOptions } from '@/lib/organization-service';
+import { LocationFields } from '@/components/location-fields';
+import { organizationLabels as labels } from '@/lib/organization-labels';
+import { formatCnpj } from '@/lib/cnpj';
 import { AppError } from '@/lib/errors';
 import { ticketAction } from '@/app/actions';
 import { ActionForm, Submit } from '@/components/form';
@@ -51,11 +55,17 @@ export default async function TicketPage({
     throw error;
   });
   const tech = ['TI', 'ADMIN'].includes(user.role);
+  const companies = tech ? await locationOptions(user.id) : [];
   const manage = user.role === 'ADMIN' || (user.role === 'TI' && ticket.assigneeId === user.id);
   const editable = manage && !!ticket.assigneeId && ticket.status !== 'RESOLVIDO';
   const technicians = editable
     ? await db.user.findMany({
-        where: { role: 'TI', active: true, id: { not: ticket.assigneeId! } },
+        where: {
+          organizationId: user.organizationId,
+          role: 'TI',
+          active: true,
+          id: { not: ticket.assigneeId! },
+        },
         select: { id: true, name: true },
         orderBy: { name: 'asc' },
       })
@@ -65,6 +75,7 @@ export default async function TicketPage({
   const categories = tech
     ? await db.category.findMany({
         where: {
+          organizationId: user.organizationId,
           OR: [{ active: true }, ...(ticket.categoryId ? [{ id: ticket.categoryId }] : [])],
         },
         orderBy: { name: 'asc' },
@@ -102,12 +113,25 @@ export default async function TicketPage({
             <p className="description">{ticket.description}</p>
             <div className="ticket-facts">
               <div>
+                <span>{labels.company}</span>
+                <strong>
+                  {ticket.company?.displayName || labels.noCompany}
+                  {ticket.unit && ` · ${ticket.unit.name}`}
+                </strong>
+                {ticket.company && <small>CNPJ {formatCnpj(ticket.company.cnpj)}</small>}
+              </div>
+              <div>
+                <span>Registrado por</span>
+                <strong>{ticket.openedByUser?.name || 'Não registrado (legado)'}</strong>
+              </div>
+              <div>
                 <span>Solicitante</span>
-                <strong>{ticket.requester.name}</strong>
+                <strong>{ticket.requesterName}</strong>
+                {!ticket.requesterId && <small>Solicitante informado manualmente</small>}
               </div>
               <div>
                 <span>Setor na abertura</span>
-                <strong>{ticket.department.name}</strong>
+                <strong>{ticket.department?.name || 'Sem setor'}</strong>
               </div>
               <div>
                 <span>Impacto informado</span>
@@ -194,7 +218,11 @@ export default async function TicketPage({
                     className={`timeline-dot ${event.type === 'RESOLVIDO' ? 'completed' : ''}`}
                   />
                   <div>
-                    <strong>{eventLabels[event.type]}</strong>
+                    <strong>
+                      {event.type === 'CRIADO' && ticket.origin === 'ATENDIMENTO_RAPIDO'
+                        ? `Atendimento rápido registrado por ${event.actor.name}`
+                        : eventLabels[event.type]}
+                    </strong>
                     {event.targetUser && (
                       <span className="event-target"> · {event.targetUser.name}</span>
                     )}
@@ -247,6 +275,17 @@ export default async function TicketPage({
         <aside className="detail-aside">
           {tech && (
             <section className="panel padded">
+              <h2>Localização</h2>
+              <ActionForm action={ticketAction}>
+                <input type="hidden" name="ticketId" value={id} />
+                <input type="hidden" name="intent" value="location" />
+                <LocationFields
+                  companies={companies}
+                  initialCompanyId={ticket.companyId}
+                  initialUnitId={ticket.unitId}
+                />
+                <Submit className="button secondary">Corrigir localização</Submit>
+              </ActionForm>
               <h2>Classificação técnica</h2>
               <p className="muted small">
                 Opcional. Não altera o impacto informado pelo solicitante.

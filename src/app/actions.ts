@@ -8,6 +8,7 @@ import { AppError } from '@/lib/errors';
 import { requireUser, SESSION_COOKIE } from '@/lib/auth';
 import { login, logout, changePassword } from '@/lib/auth-service';
 import * as service from '@/lib/services';
+import { saveCompany, saveUnit } from '@/lib/organization-service';
 export type FormState = { error?: string; success?: string };
 const value = (form: FormData, key: string) => String(form.get(key) ?? '');
 async function sameOrigin() {
@@ -25,7 +26,7 @@ function failure(error: unknown): FormState {
   if (error instanceof ZodError)
     return { error: error.issues[0]?.message || 'Verifique os campos informados.' };
   if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002')
-    return { error: 'Este username já está em uso ou o registro já existe.' };
+    return { error: 'Já existe um cadastro com este CNPJ, username ou nome. Verifique os dados.' };
   console.error('Falha na operação:', error instanceof Error ? error.name : 'UnknownError');
   return { error: 'Não foi possível concluir. Tente novamente em instantes.' };
 }
@@ -83,6 +84,10 @@ function userFields(form: FormData) {
     username: value(form, 'username'),
     departmentId: value(form, 'departmentId'),
     role: value(form, 'role'),
+    primaryCompanyId: value(form, 'primaryCompanyId') || null,
+    primaryUnitId: value(form, 'primaryUnitId') || null,
+    additionalCompanyIds: form.getAll('additionalCompanyIds').map(String),
+    additionalUnitIds: form.getAll('additionalUnitIds').map(String),
   };
 }
 export async function createUserAction(_: FormState, form: FormData): Promise<FormState> {
@@ -127,7 +132,14 @@ export async function createTicketAction(_: FormState, form: FormData): Promise<
     const user = await requireUser(['ADMIN', 'TI', 'FUNCIONARIO']);
     const ticket = await service.createTicket(
       user.id,
-      { description: value(form, 'description'), impact: value(form, 'impact') },
+      {
+        description: value(form, 'description'),
+        impact: value(form, 'impact'),
+        companyId: value(form, 'companyId') || undefined,
+        unitId: value(form, 'unitId') || null,
+        requesterName: value(form, 'requesterName') || undefined,
+        quick: value(form, 'quick') === 'true',
+      },
       value(form, 'requesterId') || undefined,
     );
     id = ticket.id;
@@ -143,6 +155,12 @@ export async function ticketAction(_: FormState, form: FormData): Promise<FormSt
     const user = await requireUser();
     const id = value(form, 'ticketId');
     switch (value(form, 'intent')) {
+      case 'location':
+        await service.relocateTicket(user.id, id, {
+          companyId: value(form, 'companyId'),
+          unitId: value(form, 'unitId') || null,
+        });
+        break;
       case 'classify':
         await service.classifyTicket(user.id, id, {
           categoryId: value(form, 'categoryId') || null,
@@ -191,6 +209,41 @@ export async function categoryAction(_: FormState, form: FormData): Promise<Form
     });
     revalidatePath('/', 'layout');
     return { success: 'Categoria salva. Os vínculos históricos foram preservados.' };
+  } catch (error) {
+    return failure(error);
+  }
+}
+
+export async function companyAction(_: FormState, form: FormData): Promise<FormState> {
+  try {
+    await sameOrigin();
+    const user = await requireUser(['ADMIN']);
+    await saveCompany(user.id, {
+      id: value(form, 'id') || undefined,
+      displayName: value(form, 'displayName'),
+      legalName: value(form, 'legalName') || null,
+      cnpj: value(form, 'cnpj'),
+      active: value(form, 'active') !== 'false',
+    });
+    revalidatePath('/', 'layout');
+    return { success: 'Cadastro salvo.' };
+  } catch (error) {
+    return failure(error);
+  }
+}
+export async function unitAction(_: FormState, form: FormData): Promise<FormState> {
+  try {
+    await sameOrigin();
+    const user = await requireUser(['ADMIN']);
+    await saveUnit(user.id, {
+      id: value(form, 'id') || undefined,
+      companyId: value(form, 'companyId'),
+      name: value(form, 'name'),
+      code: value(form, 'code') || null,
+      active: value(form, 'active') !== 'false',
+    });
+    revalidatePath('/', 'layout');
+    return { success: 'Cadastro salvo.' };
   } catch (error) {
     return failure(error);
   }

@@ -2264,3 +2264,66 @@ tbody tr:hover {
     font-size: 16px;
   }
 }
+
+.simple-login {
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: #f4f7f5;
+}
+.simple-login-card {
+  width: 100%;
+  max-width: 380px;
+  padding: 32px;
+  border: 1px solid var(--border);
+  background: white;
+  border-radius: 12px;
+}
+.simple-login-card h1 {
+  font-size: 25px;
+  margin: 0 0 28px;
+}
+.simple-login-card .button {
+  width: 100%;
+}
+.login-internal {
+  text-align: center;
+  margin: 24px 0 0;
+}
+.additional-locations {
+  margin: 20px 0;
+}
+.additional-locations summary {
+  cursor: pointer;
+  font-weight: 600;
+  margin-bottom: 16px;
+}
+.access-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 0;
+}
+.access-option input {
+  width: 18px;
+  height: 18px;
+}
+.location-badge {
+  color: var(--green);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 12px;
+}
+.quick-identity-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+.quick-identity-tabs button {
+  flex: 1;
+}
+.quick-identity-tabs .button {
+  transition: none;
+}

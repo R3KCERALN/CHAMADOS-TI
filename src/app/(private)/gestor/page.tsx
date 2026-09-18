@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { organizationLabels as labels } from '@/lib/organization-labels';
 import { notFound } from 'next/navigation';
 import { requireUser } from '@/lib/auth';
 import { analyticsOptions, overview, describeFilters } from '@/lib/analytics-service';
@@ -29,6 +30,9 @@ export default async function ManagementPage({
           <p>Demanda, fluxo e contexto para decidir o próximo passo.</p>
         </div>
         <div className="management-links">
+          <Link className="button secondary" href={`/gestor/filiais?${queryString(params)}`}>
+            {labels.companies}
+          </Link>
           <Link href={`/gestor/equipe?${queryString(params)}`} className="button secondary">
             Equipe de TI
           </Link>
@@ -99,6 +103,30 @@ export default async function ManagementPage({
       )}
       <Evolution rows={data.series} />
       <div className="analytics-grid">
+        <Bars
+          title={`Chamados por ${labels.company.toLowerCase()}`}
+          subtitle="Abertos no período, incluindo dados históricos sem localização."
+          rows={data.companies}
+          links={Object.fromEntries(
+            data.companies.map((c) => [
+              c.id!,
+              `/gestor/filiais/${c.id}?${queryString(params, { company: c.id!, unit: '', pagina: '' })}`,
+            ]),
+          )}
+        />
+        {options.companies.some((c) => c.units.length) && (
+          <Bars
+            title={`Chamados por ${labels.unit.toLowerCase()}`}
+            subtitle="Abertos no período. Clique para consultar os chamados."
+            rows={data.units}
+            links={Object.fromEntries(
+              data.units.map((u) => [
+                u.id!,
+                `/gestor/chamados?${queryString(params, { unit: u.id!, pagina: '' })}`,
+              ]),
+            )}
+          />
+        )}
         <Bars
           title="Demanda por setor"
           subtitle="Chamados abertos no período e participação no total."

@@ -15,8 +15,13 @@ export default async function CategoriesPage({
   const params = await searchParams;
   const page = Math.max(1, Math.min(100000, Math.trunc(Number(params.pagina)) || 1));
   const [categories, total] = await Promise.all([
-    db.category.findMany({ orderBy: { name: 'asc' }, take: 20, skip: (page - 1) * 20 }),
-    db.category.count(),
+    db.category.findMany({
+      where: { organizationId: user.organizationId },
+      orderBy: { name: 'asc' },
+      take: 20,
+      skip: (page - 1) * 20,
+    }),
+    db.category.count({ where: { organizationId: user.organizationId } }),
   ]);
   return (
     <>

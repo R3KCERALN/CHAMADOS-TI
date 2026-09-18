@@ -1,4 +1,5 @@
 'use client';
+import { LocationFilter } from '@/components/location-fields';
 import { useState } from 'react';
 import { useFormStatus } from 'react-dom';
 import type { analyticsOptions } from '@/lib/analytics-service';
@@ -23,15 +24,24 @@ export function ManagementFilters({
   options,
   values,
   lockedTechnician,
+  lockedCompany,
 }: {
   options: Awaited<ReturnType<typeof analyticsOptions>>;
   values: Record<string, string>;
   lockedTechnician?: string;
+  lockedCompany?: string;
 }) {
   const [period, setPeriod] = useState(values.periodo || '30dias');
   return (
     <form className="panel management-filters" method="get">
+      <input type="hidden" name="carteira" value={values.carteira || ''} />
       <div className="filter-grid">
+        <LocationFilter
+          companies={options.companies}
+          company={lockedCompany || values.company}
+          unit={values.unit}
+          locked={!!lockedCompany}
+        />
         <div className="field">
           <label htmlFor="periodo">Período</label>
           <select

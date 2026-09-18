@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { organizationLabels as labels } from '@/lib/organization-labels';
 import { ArrowUpRight, Inbox, ChevronRight } from 'lucide-react';
 import { formatDate, statusLabels, ticketNumber } from '@/lib/labels';
 import type { TicketStatus, Impact } from '@/generated/prisma/client';
@@ -17,8 +18,11 @@ type TicketSummary = {
   impact: Impact;
   status: TicketStatus;
   createdAt: Date;
-  requester: { name: string };
-  department: { name: string };
+  requester: { name: string } | null;
+  requesterName: string;
+  company?: { displayName: string } | null;
+  unit?: { name: string } | null;
+  department: { name: string } | null;
   assignee: { name: string } | null;
 };
 export function TicketList({
@@ -51,10 +55,14 @@ export function TicketList({
           <div className="ticket-main">
             <div className="ticket-eyebrow">
               <span>{ticketNumber(ticket.number)}</span>
-              <span>{ticket.department.name}</span>
+              <span>{ticket.department?.name || 'Sem setor'}</span>
               {ticket.impact === 'BLOQUEADO' && (
                 <span className="blocked-label">Trabalho bloqueado</span>
               )}
+            </div>
+            <div className="location-badge">
+              {ticket.company?.displayName || labels.noCompany}
+              {ticket.unit && ` · ${ticket.unit.name}`}
             </div>
             <h3>{ticket.description}</h3>
             <p>
@@ -62,7 +70,7 @@ export function TicketList({
                 ? ticket.assignee
                   ? `Com ${ticket.assignee.name}`
                   : 'Aguardando um técnico'
-                : ticket.requester.name}{' '}
+                : ticket.requesterName}{' '}
               <span>·</span> {formatDate(ticket.createdAt)}
             </p>
           </div>

@@ -11,6 +11,7 @@ import {
   KeyRound,
 } from 'lucide-react';
 import { logoutAction } from '@/app/actions';
+import { organizationLabels as labels } from '@/lib/organization-labels';
 import { roleLabels } from '@/lib/labels';
 import type { Role } from '@/generated/prisma/client';
 import { Submit } from './form';
@@ -55,6 +56,18 @@ export function Shell({
               <Users size={19} /> Usuários
             </Link>
           )}
+          {user.role === 'ADMIN' && (
+            <>
+              <Link href="/admin/filiais">
+                <ListTodo size={19} />
+                {labels.companies}
+              </Link>
+              <Link href="/admin/unidades">
+                <ListTodo size={19} />
+                {labels.units}
+              </Link>
+            </>
+          )}
           {['GESTOR', 'ADMIN'].includes(user.role) && (
             <Link href="/gestor">
               <ChartNoAxesCombined size={19} /> Indicadores
@@ -73,7 +86,7 @@ export function Shell({
         )}
         <div className="sidebar-bottom">
           <span className="connection-dot" /> Ambiente interno
-          <span className="version">VERSÃO 1.1</span>
+          <span className="version">VERSÃO 1.2</span>
         </div>
       </aside>
       <div className="workspace">
@@ -108,7 +121,13 @@ export function Shell({
           <Link href="/">Início</Link>
           {user.role !== 'GESTOR' && <Link href="/chamados">Chamados</Link>}
           {tech && <Link href="/atendimento-rapido">+ Rápido</Link>}
-          {user.role === 'ADMIN' && <Link href="/admin/usuarios">Usuários</Link>}
+          {user.role === 'ADMIN' && (
+            <>
+              <Link href="/admin/usuarios">Usuários</Link>
+              <Link href="/admin/filiais">{labels.companies}</Link>
+              <Link href="/admin/unidades">{labels.units}</Link>
+            </>
+          )}
           {['GESTOR', 'ADMIN'].includes(user.role) && <Link href="/gestor">Indicadores</Link>}
         </nav>
         <main id="main" className="main-content">

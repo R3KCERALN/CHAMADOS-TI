@@ -3,6 +3,7 @@ import { notFound } from 'next/navigation';
 import { ArrowLeft } from 'lucide-react';
 import { requireUser } from '@/lib/auth';
 import { db } from '@/lib/db';
+import { locationOptions } from '@/lib/organization-service';
 import { publicUserSelect } from '@/lib/auth-service';
 import { ActionForm, Submit } from '@/components/form';
 import { UserFields } from '@/components/user-fields';
@@ -12,10 +13,17 @@ export default async function EditUserPage({ params }: { params: Promise<{ id: s
   if (actor.role !== 'ADMIN') notFound();
   const { id } = await params;
   const [user, departments] = await Promise.all([
-    db.user.findUnique({ where: { id }, select: publicUserSelect }),
-    db.department.findMany({ where: { active: true }, orderBy: { name: 'asc' } }),
+    db.user.findUnique({
+      where: { id, organizationId: actor.organizationId },
+      select: { ...publicUserSelect, companyAccess: true, unitAccess: true },
+    }),
+    db.department.findMany({
+      where: { active: true, organizationId: actor.organizationId },
+      orderBy: { name: 'asc' },
+    }),
   ]);
   if (!user) notFound();
+  const companies = await locationOptions(actor.id, false);
   return (
     <div className="narrow">
       <Link className="back-link" href="/admin/usuarios">
@@ -32,7 +40,7 @@ export default async function EditUserPage({ params }: { params: Promise<{ id: s
       <section className="panel padded">
         <ActionForm action={updateUserAction}>
           <input type="hidden" name="id" value={id} />
-          <UserFields departments={departments} user={user} />
+          <UserFields companies={companies} departments={departments} user={user} />
           <Submit>Salvar alterações</Submit>
         </ActionForm>
       </section>

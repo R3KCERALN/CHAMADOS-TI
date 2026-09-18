@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import type { Distribution, Overview } from '@/lib/analytics-service';
 import { formatDuration } from '@/lib/analytics-service';
 export function Bars({
@@ -5,11 +6,13 @@ export function Bars({
   subtitle,
   rows,
   time = false,
+  links,
 }: {
   title: string;
   subtitle: string;
   rows: Distribution[];
   time?: boolean;
+  links?: Record<string, string>;
 }) {
   const total = rows.reduce((s, r) => s + r.count, 0),
     max = Math.max(1, ...rows.map((r) => r.count));
@@ -22,9 +25,17 @@ export function Bars({
       ) : (
         <ul className="bar-list">
           {rows.map((row) => (
-            <li key={row.name}>
+            <li key={row.id || row.name}>
               <div className="bar-caption">
-                <span>{row.name}</span>
+                <span>
+                  {links?.[row.id || row.name] ? (
+                    <Link className="text-link" href={links[row.id || row.name]}>
+                      {row.name}
+                    </Link>
+                  ) : (
+                    row.name
+                  )}
+                </span>
                 <strong>
                   {row.count.toLocaleString('pt-BR')}{' '}
                   <small>{total ? Math.round((row.count / total) * 100) : 0}%</small>

@@ -3,6 +3,7 @@ import { notFound } from 'next/navigation';
 import { ArrowLeft } from 'lucide-react';
 import { requireUser } from '@/lib/auth';
 import { db } from '@/lib/db';
+import { locationOptions } from '@/lib/organization-service';
 import { ActionForm, Submit } from '@/components/form';
 import { UserFields } from '@/components/user-fields';
 import { createUserAction } from '@/app/actions';
@@ -10,9 +11,10 @@ export default async function CreateUserPage() {
   const user = await requireUser();
   if (user.role !== 'ADMIN') notFound();
   const departments = await db.department.findMany({
-    where: { active: true },
+    where: { active: true, organizationId: user.organizationId },
     orderBy: { name: 'asc' },
   });
+  const companies = await locationOptions(user.id, false);
   return (
     <div className="narrow">
       <Link className="back-link" href="/admin/usuarios">
@@ -28,7 +30,7 @@ export default async function CreateUserPage() {
       </div>
       <section className="panel padded">
         <ActionForm action={createUserAction}>
-          <UserFields departments={departments} />
+          <UserFields companies={companies} departments={departments} />
           <Submit>Criar usuário</Submit>
         </ActionForm>
       </section>

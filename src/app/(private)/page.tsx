@@ -16,18 +16,31 @@ export default async function HomePage() {
   const counts = employee
     ? null
     : await Promise.all([
-        db.ticket.count({ where: { status: 'NOVO' } }),
-        db.ticket.count({ where: { assigneeId: user.id, status: 'EM_ATENDIMENTO' } }),
-        db.ticket.count({ where: { assigneeId: user.id, status: 'AGUARDANDO' } }),
+        db.ticket.count({ where: { organizationId: user.organizationId, status: 'NOVO' } }),
         db.ticket.count({
           where: {
+            organizationId: user.organizationId,
+            assigneeId: user.id,
+            status: 'EM_ATENDIMENTO',
+          },
+        }),
+        db.ticket.count({
+          where: { organizationId: user.organizationId, assigneeId: user.id, status: 'AGUARDANDO' },
+        }),
+        db.ticket.count({
+          where: {
+            organizationId: user.organizationId,
             assigneeId: user.id,
             status: 'RESOLVIDO',
             resolvedAt: { gte: today.start, lt: today.end },
           },
         }),
         db.ticket.count({
-          where: { status: { not: 'RESOLVIDO' }, participants: { some: { userId: user.id } } },
+          where: {
+            organizationId: user.organizationId,
+            status: { not: 'RESOLVIDO' },
+            participants: { some: { userId: user.id } },
+          },
         }),
       ]);
   return (

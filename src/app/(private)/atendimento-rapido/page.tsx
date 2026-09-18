@@ -2,17 +2,13 @@ import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { ArrowLeft, Zap } from 'lucide-react';
 import { requireUser } from '@/lib/auth';
-import { db } from '@/lib/db';
+import { locationOptions } from '@/lib/organization-service';
 import { TicketForm } from '@/components/ticket-form';
 import { RequesterPicker } from '@/components/requester-picker';
 export default async function QuickPage() {
   const user = await requireUser();
   if (!['TI', 'ADMIN'].includes(user.role)) notFound();
-  const users = await db.user.findMany({
-    where: { active: true },
-    select: { id: true, name: true, department: { select: { name: true } } },
-    orderBy: { name: 'asc' },
-  });
+  const companies = await locationOptions(user.id);
   return (
     <div className="narrow">
       <Link className="back-link" href="/">
@@ -30,7 +26,7 @@ export default async function QuickPage() {
       </div>
       <section className="panel padded">
         <TicketForm quick>
-          <RequesterPicker users={users} />
+          <RequesterPicker companies={companies} />
         </TicketForm>
       </section>
     </div>
