@@ -1,0 +1,176 @@
+'use server';
+import { cookies, headers } from 'next/headers';
+import { redirect, unstable_rethrow } from 'next/navigation';
+import { revalidatePath } from 'next/cache';
+import { ZodError } from 'zod';
+import { Prisma } from '@/generated/prisma/client';
+import { AppError } from '@/lib/errors';
+import { requireUser, SESSION_COOKIE } from '@/lib/auth';
+import { login, logout, changePassword } from '@/lib/auth-service';
+import * as service from '@/lib/services';
+export type FormState = { error?: string; success?: string };
+const value = (form: FormData, key: string) => String(form.get(key) ?? '');
+async function sameOrigin() {
+  const origin = (await headers()).get('origin');
+  const expected = new URL(process.env.APP_URL || 'http://localhost:3000').origin;
+  if (origin !== expected)
+    throw new AppError(
+      'Origem da solicitação inválida. Reabra o sistema pelo endereço configurado.',
+      403,
+    );
+}
+function failure(error: unknown): FormState {
+  unstable_rethrow(error);
+  if (error instanceof AppError) return { error: error.message };
+  if (error instanceof ZodError)
+    return { error: error.issues[0]?.message || 'Verifique os campos informados.' };
+  if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002')
+    return { error: 'Este username já está em uso ou o registro já existe.' };
+  console.error('Falha na operação:', error instanceof Error ? error.name : 'UnknownError');
+  return { error: 'Não foi possível concluir. Tente novamente em instantes.' };
+}
+export async function loginAction(_: FormState, form: FormData): Promise<FormState> {
+  let mustChange = false;
+  try {
+    await sameOrigin();
+    const result = await login(value(form, 'username'), value(form, 'password'));
+    mustChange = result.mustChangePassword;
+    const secure = process.env.COOKIE_SECURE !== 'false';
+    if (
+      !secure &&
+      !['localhost', '127.0.0.1', '[::1]'].includes(
+        new URL(process.env.APP_URL || 'http://localhost:3000').hostname,
+      )
+    )
+      throw new AppError(
+        'Configure HTTPS e COOKIE_SECURE=true para acessar fora do ambiente local.',
+      );
+    (await cookies()).set(SESSION_COOKIE, result.token, {
+      httpOnly: true,
+      secure,
+      sameSite: 'lax',
+      path: '/',
+      expires: result.expiresAt,
+    });
+  } catch (error) {
+    return failure(error);
+  }
+  redirect(mustChange ? '/alterar-senha' : '/');
+}
+export async function logoutAction() {
+  await sameOrigin();
+  const jar = await cookies();
+  await logout(jar.get(SESSION_COOKIE)?.value);
+  jar.delete(SESSION_COOKIE);
+  redirect('/login');
+}
+export async function passwordAction(_: FormState, form: FormData): Promise<FormState> {
+  try {
+    await sameOrigin();
+    const user = await requireUser(undefined, true);
+    if (value(form, 'password') !== value(form, 'confirmation'))
+      throw new AppError('A confirmação não corresponde à nova senha.');
+    await changePassword(user.id, value(form, 'currentPassword'), value(form, 'password'));
+    (await cookies()).delete(SESSION_COOKIE);
+  } catch (error) {
+    return failure(error);
+  }
+  redirect('/login?alterada=1');
+}
+function userFields(form: FormData) {
+  return {
+    name: value(form, 'name'),
+    username: value(form, 'username'),
+    departmentId: value(form, 'departmentId'),
+    role: value(form, 'role'),
+  };
+}
+export async function createUserAction(_: FormState, form: FormData): Promise<FormState> {
+  try {
+    await sameOrigin();
+    const user = await requireUser(['ADMIN']);
+    await service.createUser(user.id, { ...userFields(form), password: value(form, 'password') });
+    revalidatePath('/admin/usuarios');
+  } catch (error) {
+    return failure(error);
+  }
+  redirect('/admin/usuarios?criado=1');
+}
+export async function updateUserAction(_: FormState, form: FormData): Promise<FormState> {
+  try {
+    await sameOrigin();
+    const user = await requireUser(['ADMIN']);
+    await service.updateUser(user.id, value(form, 'id'), {
+      ...userFields(form),
+      active: value(form, 'active') === 'true',
+    });
+    revalidatePath('/admin/usuarios');
+    return { success: 'Usuário atualizado. As sessões anteriores foram encerradas.' };
+  } catch (error) {
+    return failure(error);
+  }
+}
+export async function resetPasswordAction(_: FormState, form: FormData): Promise<FormState> {
+  try {
+    await sameOrigin();
+    const user = await requireUser(['ADMIN']);
+    await service.resetPassword(user.id, value(form, 'id'), value(form, 'password'));
+    return { success: 'Senha temporária definida. A troca será obrigatória no próximo login.' };
+  } catch (error) {
+    return failure(error);
+  }
+}
+export async function createTicketAction(_: FormState, form: FormData): Promise<FormState> {
+  let id = '';
+  try {
+    await sameOrigin();
+    const user = await requireUser(['ADMIN', 'TI', 'FUNCIONARIO']);
+    const ticket = await service.createTicket(
+      user.id,
+      { description: value(form, 'description'), impact: value(form, 'impact') },
+      value(form, 'requesterId') || undefined,
+    );
+    id = ticket.id;
+    revalidatePath('/');
+  } catch (error) {
+    return failure(error);
+  }
+  redirect(`/chamados/${id}?criado=1`);
+}
+export async function ticketAction(_: FormState, form: FormData): Promise<FormState> {
+  try {
+    await sameOrigin();
+    const user = await requireUser();
+    const id = value(form, 'ticketId');
+    switch (value(form, 'intent')) {
+      case 'claim':
+        await service.claimTicket(user.id, id);
+        break;
+      case 'status':
+        await service.changeStatus(user.id, id, {
+          status: value(form, 'status'),
+          waitingReason: value(form, 'waitingReason') || undefined,
+          note: value(form, 'note'),
+        });
+        break;
+      case 'support-add':
+        await service.setSupport(user.id, id, value(form, 'userId'), true);
+        break;
+      case 'support-remove':
+        await service.setSupport(user.id, id, value(form, 'userId'), false);
+        break;
+      case 'assign':
+        await service.assignTicket(user.id, id, value(form, 'userId'));
+        break;
+      case 'comment':
+        await service.addComment(user.id, id, value(form, 'content'));
+        break;
+      default:
+        throw new AppError('Operação inválida.');
+    }
+    revalidatePath('/', 'layout');
+    return { success: 'Atualização registrada.' };
+  } catch (error) {
+    return failure(error);
+  }
+}

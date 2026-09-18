@@ -1,0 +1,111 @@
+import Link from 'next/link';
+import { notFound } from 'next/navigation';
+import { Plus, ArrowUpRight } from 'lucide-react';
+import { requireUser } from '@/lib/auth';
+import { adminUsers } from '@/lib/services';
+import { roleLabels } from '@/lib/labels';
+export default async function UsersPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ criado?: string; busca?: string }>;
+}) {
+  const user = await requireUser();
+  if (user.role !== 'ADMIN') notFound();
+  const params = await searchParams;
+  const allUsers = await adminUsers(user.id);
+  const query = (params.busca || '').toLocaleLowerCase('pt-BR');
+  const users = allUsers.filter((u) =>
+    `${u.name} ${u.username} ${u.department.name}`.toLocaleLowerCase('pt-BR').includes(query),
+  );
+  return (
+    <>
+      <div className="page-heading">
+        <div>
+          <span className="eyebrow">ADMINISTRAÇÃO</span>
+          <h1>Pessoas e acessos</h1>
+          <p>O acesso certo para cada pessoa, com o histórico sempre preservado.</p>
+        </div>
+        <Link href="/admin/usuarios/novo" className="button primary">
+          <Plus size={18} />
+          Criar usuário
+        </Link>
+      </div>
+      {params.criado && (
+        <p className="notice success" role="status">
+          Usuário criado. Compartilhe a senha temporária diretamente com a pessoa.
+        </p>
+      )}
+      <section className="panel list-panel">
+        <div className="section-heading">
+          <h2>
+            {users.length} {users.length === 1 ? 'pessoa' : 'pessoas'}
+          </h2>
+          <form className="search-form">
+            <label className="sr-only" htmlFor="busca">
+              Buscar pessoas
+            </label>
+            <input
+              id="busca"
+              name="busca"
+              placeholder="Nome, username ou setor…"
+              defaultValue={params.busca}
+              type="search"
+            />
+            <button className="button secondary" type="submit">
+              Buscar
+            </button>
+          </form>
+        </div>
+        <div className="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>Pessoa</th>
+                <th>Setor</th>
+                <th>Perfil</th>
+                <th>Situação</th>
+                <th>
+                  <span className="sr-only">Ações</span>
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {users.map((person) => (
+                <tr key={person.id}>
+                  <td>
+                    <strong>{person.name}</strong>
+                    <small>@{person.username}</small>
+                  </td>
+                  <td>{person.department.name}</td>
+                  <td>{roleLabels[person.role]}</td>
+                  <td>
+                    <span
+                      className={`status ${person.active ? 'status-RESOLVIDO' : 'status-inactive'}`}
+                    >
+                      {person.active ? 'Ativo' : 'Inativo'}
+                    </span>
+                  </td>
+                  <td>
+                    <Link
+                      className="text-link"
+                      href={`/admin/usuarios/${person.id}`}
+                      aria-label={`Editar ${person.name}`}
+                    >
+                      Editar <ArrowUpRight size={15} />
+                    </Link>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          {!users.length && (
+            <div className="empty">
+              <h3>Nenhuma pessoa encontrada</h3>
+              <p>Tente outro nome ou setor.</p>
+            </div>
+          )}
+        </div>
+      </section>
+    </>
+  );
+}
