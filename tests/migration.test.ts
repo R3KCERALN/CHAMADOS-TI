@@ -12,15 +12,17 @@ test('migration organizacional preserva registros V1, recupera openedBy do event
     await client.query(`CREATE SCHEMA "${schema}"`);
     await client.query(`SET search_path TO "${schema}"`);
     const directories = (await readdir('prisma/migrations')).filter((n) => /^\d/.test(n)).sort();
-    for (const name of directories.slice(0, -1))
+    const boundary = directories.indexOf('202609190001_organization_locations');
+    assert.ok(boundary >= 0);
+    for (const name of directories.slice(0, boundary))
       await client.query(await readFile(`prisma/migrations/${name}/migration.sql`, 'utf8'));
     await client.query(`INSERT INTO "Department"(id,name) VALUES ('legacy-dept','Legado');
       INSERT INTO "User"(id,name,username,"passwordHash","departmentId",role,"updatedAt") VALUES ('legacy-user','Maria Antiga','legacy.maria','hash-fixture','legacy-dept','FUNCIONARIO',CURRENT_TIMESTAMP),('legacy-tech','Carlos Técnico','legacy.carlos','hash-fixture','legacy-dept','TI',CURRENT_TIMESTAMP);
       INSERT INTO "Ticket"(id,description,impact,"requesterId","departmentId","updatedAt",origin,status,"assigneeId","startedAt") VALUES ('legacy-ticket','Registro existente antes da migração.','BAIXO','legacy-user','legacy-dept',CURRENT_TIMESTAMP,'ATENDIMENTO_RAPIDO','EM_ATENDIMENTO','legacy-tech',CURRENT_TIMESTAMP);
       INSERT INTO "TicketEvent"(id,"ticketId",type,"actorId","toStatus") VALUES ('legacy-event','legacy-ticket','CRIADO','legacy-tech','EM_ATENDIMENTO');`);
-    await client.query(
-      await readFile(`prisma/migrations/${directories.at(-1)}/migration.sql`, 'utf8'),
-    );
+    for (const name of directories.slice(boundary))
+      await client.query(await readFile(`prisma/migrations/${name}/migration.sql`, 'utf8'));
+    assert.equal((await client.query('SELECT count(*) FROM "PushDelivery"')).rows[0].count, '0');
     const row = (await client.query('SELECT * FROM "Ticket" WHERE id=$1', ['legacy-ticket']))
       .rows[0];
     assert.equal(row.organizationId, 'initial-organization');

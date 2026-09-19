@@ -1,4 +1,6 @@
 import 'dotenv/config';
+import webPush from 'web-push';
+const vapid = webPush.generateVAPIDKeys();
 import { readdirSync } from 'node:fs';
 import { Client } from 'pg';
 import { spawnSync } from 'node:child_process';
@@ -13,6 +15,10 @@ const testUrl = new URL(original);
 testUrl.pathname = `/${testName}`;
 const env = {
   ...process.env,
+  VAPID_PUBLIC_KEY: vapid.publicKey,
+  VAPID_PRIVATE_KEY: vapid.privateKey,
+  VAPID_SUBJECT: 'https://support.example.invalid',
+  PUSH_WORKER_ENABLED: 'false',
   DATABASE_URL: testUrl.toString(),
   APP_URL: 'http://localhost:3100',
   COOKIE_SECURE: 'false',

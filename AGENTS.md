@@ -3,13 +3,13 @@
 ## Escopo e stack
 
 - Monólito interno Next.js 16 App Router, React, TypeScript strict, Tailwind 4, Prisma 7/adapter-pg, PostgreSQL 17 e npm; Docker Compose só para o banco. Sem deploy externo nesta fase.
-- Sistema fechado: sem signup, autenticação externa, SaaS comercial, IA, microserviços, push, offline completo, inventário, integrações, reabertura, ranking ou score. `dev`/`build` usam Webpack pela incompatibilidade local do Turbopack; validar antes de trocar.
+- Sistema fechado: sem signup, autenticação externa, SaaS comercial, IA, microserviços, offline completo, inventário, integrações, reabertura, ranking ou score. `dev`/`build` usam Webpack pela incompatibilidade local do Turbopack; validar antes de trocar.
 
 ## Segurança e permissões
 
 - Autorizar no servidor: `src/lib/auth.ts` protege rotas/actions; `src/lib/access.ts` relê ator ativo, role e organização. Validar IDs por recurso; jamais confiar em role, registrador, setor ou responsável enviados pelo cliente.
 - FUNCIONARIO só lê/comenta os próprios chamados; TI/ADMIN veem a fila; só responsável principal ou ADMIN gerencia status, apoios e transferência. GESTOR/ADMIN acessam gestão/CSV; GESTOR não vê detalhe operacional, TI não vê indicadores individuais dos colegas. Só ADMIN administra cadastros.
-- Mutações web: Server Actions, `Origin` validado contra `APP_URL`, nenhuma mutação por GET. Preservar limite persistente e erro genérico de login; não expor stack traces.
+- Mutações web: Server Actions ou endpoints de subscription push, sempre com `Origin` validado contra `APP_URL`; nenhuma mutação por GET. Preservar limite persistente e erro genérico de login; não expor stack traces.
 - Senhas/PINs: 6–128 caracteres, inclusive numéricos, Argon2id (64 MiB/3 iterações/paralelismo 1). Novas/redefinidas exigem troca; alterações de usuário/senha revogam sessões. Sessão de 8 h: apenas SHA-256 do token aleatório de 256 bits no banco; cookie HttpOnly/SameSite=Lax, Secure fora de localhost.
 
 ## Persistência e concorrência
@@ -34,6 +34,12 @@
 
 - Português do Brasil; funcionário/TI mobile-first. Abertura comum pede só descrição e impacto; Atendimento Rápido permanece curto e destacado. Reutilizar componentes locais.
 - Timestamps em UTC; `APP_TIMEZONE` em `src/lib/config.ts` (padrão `America/Belem`) rege exibição/filtros. PWA não pode cachear páginas/dados privados; sem fontes externas. Listas paginadas: chamados/equipe/comentários 20, timeline 30.
+
+## Atualização automática e push
+
+- Operação usa polling de revisão a cada 5 s e `router.refresh()`, pausado em aba oculta/edição. Revisões por organização (TI/ADMIN) ou solicitante (FUNCIONARIO) sobem com `TicketEvent` na transação; nunca expor revisão global a funcionário.
+- Criar eventos via `src/lib/ticket-events.ts`: outbox por evento/subscription é atômico; nenhum envio de rede dentro da transação. Worker no processo Next.js (`instrumentation.ts`) usa lease, retry limitado e revalida destinatário/organização. Não substituir por envio sem persistência após ação.
+- Web Push/VAPID só via env; subscriptions pertencem ao usuário autenticado e à organização. Preservar allowlist de endpoints contra SSRF, deduplicação, limpeza 404/410 e desvinculação no logout. Permissão só por clique; payload mínimo, sem descrição/comentários/nomes de pessoas. Atendimento Rápido não alerta toda a equipe. Contrato e limites no README.
 
 ## Validação e comandos
 

@@ -1,6 +1,6 @@
 # Central de Suporte
 
-V1.2 funcional de uma central interna de atendimento de TI, com operação, gestão e indicadores auditáveis. Monólito full-stack local: Next.js 16.3.5, React 19.3, TypeScript strict, Tailwind CSS 4, PostgreSQL 17 e Prisma 7.10. Sem autenticação externa, serviços pagos ou APIs de IA.
+V1.3 funcional de uma central interna de atendimento de TI, com operação, gestão e indicadores auditáveis. Monólito full-stack local: Next.js 16.3.5, React 19.3, TypeScript strict, Tailwind CSS 4, PostgreSQL 17 e Prisma 7.10. Sem autenticação externa, serviços pagos ou APIs de IA.
 
 ## Requisitos
 
@@ -154,7 +154,7 @@ FKs restritivas protegem o histórico. Índices cobrem fila, solicitante, respon
 - Argon2id: 64 MiB, 3 iterações, paralelismo 1. Senhas entre 6 e 128 caracteres.
 - Tokens de sessão aleatórios de 256 bits; somente SHA-256 persiste. Cookies HttpOnly/SameSite=Lax e Secure em HTTPS.
 - Validação Zod e autorização no servidor por operação. Usuário/role da sessão são consultados no banco, nunca confiados ao formulário.
-- Server Actions com validação explícita de Origin contra APP_URL, além da proteção nativa do Next.js.
+- Server Actions e endpoints de subscription push validam Origin contra APP_URL; ações também mantêm a proteção nativa do Next.js.
 - Sem operações destrutivas via GET, sem signup, sem exclusão de histórico e sem stack traces nas mensagens ao usuário.
 - Cabeçalhos de proteção contra iframe/sniffing e CSP básica. A CSP ainda permite scripts inline necessários ao Next; endurecimento com nonce pode ser avaliado antes de uma publicação na internet.
 - Não registrar segredos nem cachear dados privados. O limite atual de login é por conta; proteção volumétrica e limitação por IP devem ser configuradas na borda quando houver publicação externa.
@@ -178,13 +178,13 @@ Os testes criam um **banco temporário exclusivo** no mesmo PostgreSQL, aplicam 
 
 `npm run test:e2e`: inicia build de produção na porta 3100, executa o cenário real pelo navegador (desktop e viewport mobile), valida área administrativa, GESTOR, timeline, manifest, ícones, cabeçalhos e rejeição de POST de outra origem. Também executa axe para regras WCAG A/AA nas telas de login, administração, funcionário, detalhe resolvido e atendimento rápido, panorama, equipe e detalhes gerenciais. Valida classificação técnica, filtros e CSV no navegador. Usa Chrome local quando encontrado. Caso contrário, instale apenas o navegador de teste com `npx playwright install chromium`. Screenshots e traces de falhas ficam em `test-results/`.
 
-Validação da entrega: **65 testes de integração e 2 testes E2E aprovados**, lint sem avisos, TypeScript sem erros, build de produção aprovado e auditoria npm sem vulnerabilidades conhecidas. As verificações automáticas de acessibilidade não substituem uma avaliação manual completa com tecnologias assistivas.
+Validação da entrega: **79 testes de integração e 6 testes E2E**, lint sem avisos, TypeScript sem erros, build de produção aprovado e auditoria npm sem vulnerabilidades conhecidas. As verificações automáticas de acessibilidade não substituem uma avaliação manual completa com tecnologias assistivas.
 
 `npm audit` verifica dependências. Overrides de deepmerge-ts 8.0.2 e mysql2 3.24.4 corrigem avisos transitivos do Prisma CLI, validados com generate/migrations/testes/build.
 
 ## PWA
 
-Manifest em `/manifest.webmanifest`, ícones PNG 192/512 e maskable, display standalone, tema e background locais. O service worker apenas prepara instalação e não intercepta/cacheia páginas privadas. Sem push ou operação offline. A opção de instalar depende do navegador, HTTPS (ou localhost) e critérios próprios da plataforma. No iOS, utilize “Adicionar à Tela de Início”.
+Manifest em `/manifest.webmanifest`, ícones PNG 192/512 e maskable, display standalone, tema e background locais. O service worker prepara instalação, recebe Web Push e abre o chamado, sem interceptar/cachear páginas privadas. Web Push opcional via VAPID; sem operação offline. A opção de instalar depende do navegador, HTTPS (ou localhost) e critérios próprios da plataforma. No iOS, utilize “Adicionar à Tela de Início”.
 
 ## Estrutura
 
@@ -214,13 +214,13 @@ public/                  Ícones e service worker sem cache privado
 AGENTS.md                Regras para manutenção por futuros agentes
 ```
 
-Decisões: componentes locais pequenos em vez de uma dependência completa de UI; fontes do sistema sem requests externos; datas UTC com exibição no APP_TIMEZONE; paginação de chamados, equipe e comentários em 20 e eventos em 30 registros. Gráficos SVG/CSS com tabela acessível, sem biblioteca adicional. Dev/build usam Webpack, opção estável do Next.js 16, porque o Turbopack não conseguiu abrir uma porta interna de processamento de CSS no ambiente restrito de desenvolvimento. A busca de pessoas acontece no servidor, limitada a 15 resultados por consulta e ao escopo da organização. Refine nome/setor para localizar uma pessoa. Não há atualização em tempo real: a página é atualizada após ações próprias; para ver alterações de outro usuário, recarregue.
+Decisões: componentes locais pequenos em vez de uma dependência completa de UI; fontes do sistema sem requests externos; datas UTC com exibição no APP_TIMEZONE; paginação de chamados, equipe e comentários em 20 e eventos em 30 registros. Gráficos SVG/CSS com tabela acessível, sem biblioteca adicional. Dev/build usam Webpack, opção estável do Next.js 16, porque o Turbopack não conseguiu abrir uma porta interna de processamento de CSS no ambiente restrito de desenvolvimento. A busca de pessoas acontece no servidor, limitada a 15 resultados por consulta e ao escopo da organização. Refine nome/setor para localizar uma pessoa. Telas operacionais verificam revisões a cada cinco segundos e atualizam componentes automaticamente; veja o contrato abaixo.
 
 ## Limitações deliberadas
 
 Não há ranking, score, horas individuais, percentual de utilização, SLA, custo, jornada ou indicação automática de sobrecarga: faltam dados confiáveis para calculá-los. O backlog, as esperas e a complexidade dão contexto para análise humana. Classificações/status são os atuais, mesmo quando o período é passado; não há reconstrução histórica desses filtros. GESTOR consulta dados gerenciais e exporta, mas o detalhe operacional permanece reservado ao TI/ADMIN e ao solicitante autorizado.
 
-Exportações usam snapshot consistente e lotes de 500, com timeout de dois minutos; intervalos grandes podem exigir uma seleção menor. A disponibilidade de métricas depende dos eventos preservados. O sistema continua sem push, notificações externas, reabertura ou atualização em tempo real.
+Exportações usam snapshot consistente e lotes de 500, com timeout de dois minutos; intervalos grandes podem exigir uma seleção menor. A disponibilidade de métricas depende dos eventos preservados. O sistema continua sem e-mail/WhatsApp/SMS, reabertura ou chat em tempo real.
 
 ## Organização e solicitantes
 
@@ -232,4 +232,63 @@ No cadastro de funcionário, informe a filial principal; setor permanece obrigat
 
 CSV inclui filial/CNPJ/unidade, registrador, solicitante cadastrado, nome manual e a identificação amigável preservada. Todos os filtros e consultas são limitados à organização autenticada, e o banco rejeita relacionamentos entre organizações. Os testes também aplicam a migration sobre registros no formato V1 para verificar preservação.
 
-Decisões explícitas: usernames e números de chamados continuam globalmente únicos; `requesterId` mantém seu nome anterior e equivale a requesterUserId. A Company de uma Unit é imutável após sua criação para preservar a localização histórica. Campos Company e openedBy podem ser nulos em registros legados sem informação confiável; novas aberturas exigem ambos. Não foi implementado SaaS comercial, troca de organização, notificações ou push.
+Decisões explícitas: usernames e números de chamados continuam globalmente únicos; `requesterId` mantém seu nome anterior e equivale a requesterUserId. A Company de uma Unit é imutável após sua criação para preservar a localização histórica. Campos Company e openedBy podem ser nulos em registros legados sem informação confiável; novas aberturas exigem ambos. Não foi implementado SaaS comercial nem troca de organização.
+
+## Atualização automática e Web Push — V1.3
+
+A atualização operacional usa **polling leve de revisão a cada 5 segundos**, sem WebSocket, SSE ou infraestrutura adicional. Triggers de `TicketEvent` incrementam revisões dentro da transação: organização para TI/ADMIN, próprios chamados para FUNCIONARIO. O endpoint autenticado `/api/operacao/revisao` devolve apenas a revisão autorizada, acrescida da data local para renovar contadores na virada do dia. Criação, atribuição/transferência, status, apoio, comentário e resolução atualizam fila, detalhe e contadores. Categoria/localização também invalidam a visão.
+
+`router.refresh()` atualiza os componentes de servidor e preserva URL, filtros e estado React/posição quando possível. A consulta pausa em aba oculta; falhas têm espera progressiva até 30 s e retomada ao voltar à tela/conexão. Durante edição, exibe atualizações disponíveis e preserva o rascunho. Gestão não faz polling. É atualização quase em tempo real, com latência normal de até cinco segundos; uma aba suspensa pelo sistema operacional retoma ao ficar visível. Os contadores de revisão evitam varrer históricos e respeitam a ordem de commits concorrentes.
+
+### Configurar VAPID
+
+```bash
+npm run db:generate
+npm run db:migrate
+npm run push:keys -- .env mailto:ti@empresa.com
+# Para a instalação demo, com chaves independentes:
+npm run push:keys -- .env.demo mailto:ti@empresa.com
+npm run build
+npm run start
+```
+
+Use seu contato público real. O comando grava `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` e `VAPID_SUBJECT` diretamente no arquivo ignorado pelo Git, com permissão 0600, e não imprime chaves. Não sobrescreve configuração existente. Preserve o par nas próximas execuções: trocar as chaves exige reativação nos dispositivos. Não use `NEXT_PUBLIC_*` para a chave privada. Sem as três variáveis, a operação funciona e a interface informa que notificações não estão configuradas. Configuração parcial/inválida impede inicialização do worker. `PUSH_WORKER_ENABLED=false` suspende despacho (os testes usam isso); padrão é ativo.
+
+Não há SaaS contratado ou SDK Firebase/Supabase. **Web Push padrão precisa da conexão aos servidores de entrega do navegador** (Google/FCM, Mozilla, Apple ou Microsoft); funcionar sem qualquer servidor externo é incompatível com Web Push. A aplicação envia diretamente a esses endpoints usando VAPID e criptografia padrão. A allowlist aceita somente HTTPS nos hosts nativos previstos em `src/lib/push-config.ts`, bloqueando URLs arbitrárias/SSRF. Um navegador com outro provedor precisa de validação e inclusão explícita.
+
+### Dispositivos e privacidade
+
+A ação **Ativar notificações** aparece nas telas autenticadas operacionais; jamais pedimos permissão no carregamento. Permitido, negado, não solicitado, indisponível e não configurado têm estados próprios. O usuário pode desativar o dispositivo. Há até 20 subscriptions ativas por usuário; cada vínculo persiste User + Organization, sem aceitar esses IDs no corpo da requisição. `/api/push/subscriptions` exige sessão, valida Origin nas mutações, JSON estrito e tamanho limitado. Somente a chave VAPID pública é retornada ao navegador.
+
+Ao voltar à mesma conta, um dispositivo já ativo é associado à sessão atual sem novo pedido de permissão; endpoints rotacionados/desativados exigem reativação. Logout remove os vínculos daquela sessão/dispositivo; mudança de senha ou cadastro desativa os vínculos do usuário. Sessão naturalmente expirada não cancela o opt-in push: receber avisos com o app fechado é intencional; abrir o chamado exige autenticação. Desativação de usuário/organização e permissões são verificadas novamente antes do envio. Troca de conta no mesmo navegador desfaz a subscription anterior. Endpoints e chaves de dispositivos são dados sensíveis e não entram em logs ou CSV.
+
+Payload: número do chamado, tipo do evento e filial; sem descrição, comentário ou nome de pessoa. O clique passa por `/notificacoes/[id]`, conserva o destino durante login/troca obrigatória e aplica as permissões normais do chamado. Não aceita redirecionamento externo.
+
+### Destinatários
+
+| Evento                               | Destinatários               |
+| ------------------------------------ | --------------------------- |
+| Novo chamado normal                  | TI ativos da organização    |
+| Transferência                        | Novo responsável            |
+| Apoio adicionado                     | Técnico adicionado          |
+| Comentário do solicitante cadastrado | Responsável e apoios atuais |
+| Comentário de TI/ADMIN               | Solicitante cadastrado      |
+| Resolução                            | Solicitante cadastrado      |
+
+Sempre excluímos o autor. Atendimento Rápido não dispara alerta coletivo; solicitante textual nunca recebe push. GESTOR não recebe links operacionais aos quais não tem acesso. Apoio removido, assumir e mudanças intermediárias de status atualizam telas, mas não geram push extra.
+
+### Entrega, falhas e migração
+
+A migration incremental `202609190002_realtime_push` adiciona revisões, `PushSubscription` e `PushDelivery`, com constraints e proteção organizacional. Nenhum evento histórico gera alerta retroativo. Não altera chamados, senhas ou indicadores existentes.
+
+`recordTicketEvent` grava outbox e evento na mesma transação. O worker iniciado por `src/instrumentation.ts` roda no **processo Node persistente do próprio Next.js** e só enxerga dados confirmados. Não requer Redis, cron ou outro servidor. Deve usar `npm run start` em processo de longa duração; não há garantia de despacho em plataforma serverless/suspensa. Parar o servidor pausa o envio; pendências retomam no reinício.
+
+Cada lote reserva até 20 entregas com `FOR UPDATE SKIP LOCKED`, lease de dois minutos e token de posse. Timeout de envio: 10 s; até cinco tentativas com espera exponencial/jitter, somente para rede/429/5xx. 404/410 desativam subscription; outras falhas permanentes encerram a entrega. Destinatários/permissions são conferidos antes de enviar. Entregas com mais de 24 h são canceladas; o serviço push recebe TTL de uma hora. Registros técnicos de entrega têm retenção de sete dias; timeline permanece preservada. IDs/status de falhas são registrados sem endpoints, conteúdo ou credenciais.
+
+Unicidade evento/subscription, reserva concorrente, tópico/tag estável e recibos locais opacos no service worker reduzem duplicatas. Uma falha após o provedor aceitar e antes de gravar sucesso ainda pode gerar reenvio: não prometemos entrega exatamente uma vez. Sem IndexedDB, a deduplicação local depende do tag da notificação ainda visível. Recebimento pelo provedor não comprova leitura/exibição; não há recibos de leitura.
+
+### Validação e HTTPS
+
+Integração usa PostgreSQL real e transporte push controlado para testar destinatários, rollback, concorrência, retries e invalidação sem enviar tráfego externo. E2E cobre atualização entre sessões, contadores, mobile, rascunhos, permissão por clique, endpoints e retorno ao chamado após login, além dos fluxos anteriores. Testes geram chaves efêmeras e desabilitam o worker real.
+
+A entrega real com aplicação fechada/tela bloqueada precisa de validação em dispositivos reais com HTTPS, `APP_URL` correto, `COOKIE_SECURE=true`, contato VAPID e saída de rede liberada. Localhost permite desenvolvimento, mas HTTP pelo IP da rede não é contexto seguro. No iPhone/iPad, use o app instalado na Tela de Início e ative por toque; confira a [documentação WebKit](https://webkit.org/blog/13878/web-push-for-web-apps-on-ios-and-ipados/). A decisão de exibir e o prazo final pertencem ao navegador/sistema operacional; modos de economia, foco e permissões podem interferir. Não há garantia de aviso instantâneo.
