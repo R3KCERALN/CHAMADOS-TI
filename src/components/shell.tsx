@@ -1,4 +1,5 @@
 import Link from 'next/link';
+import { PushControl } from './push-control';
 import {
   Headset,
   LayoutGrid,
@@ -31,7 +32,7 @@ export function Shell({
   user,
   children,
 }: {
-  user: { name: string; role: Role };
+  user: { id: string; name: string; role: Role };
   children: React.ReactNode;
 }) {
   const tech = user.role === 'TI' || user.role === 'ADMIN';
@@ -131,6 +132,11 @@ export function Shell({
           {['GESTOR', 'ADMIN'].includes(user.role) && <Link href="/gestor">Indicadores</Link>}
         </nav>
         <main id="main" className="main-content">
+          {user.role !== 'GESTOR' && (
+            <>
+              <PushControl userId={user.id} />
+            </>
+          )}
           {children}
         </main>
         <footer className="footer">

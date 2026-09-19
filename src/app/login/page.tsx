@@ -1,3 +1,4 @@
+import { ticketReturnTo } from '@/lib/return-to';
 import { cookies } from 'next/headers';
 import { redirect } from 'next/navigation';
 import { ActionForm, Submit } from '@/components/form';
@@ -7,11 +8,17 @@ import { SESSION_COOKIE } from '@/lib/auth';
 export default async function LoginPage({
   searchParams,
 }: {
-  searchParams: Promise<{ alterada?: string }>;
+  searchParams: Promise<{ alterada?: string; next?: string }>;
 }) {
   const user = await getSessionUser((await cookies()).get(SESSION_COOKIE)?.value);
-  if (user) redirect(user.mustChangePassword ? '/alterar-senha' : '/');
   const params = await searchParams;
+  const destination = ticketReturnTo(params.next);
+  if (user)
+    redirect(
+      user.mustChangePassword
+        ? `/alterar-senha?next=${encodeURIComponent(destination)}`
+        : destination,
+    );
   return (
     <main id="main" className="simple-login">
       <section className="simple-login-card" aria-labelledby="login-title">
@@ -22,6 +29,7 @@ export default async function LoginPage({
           </p>
         )}
         <ActionForm action={loginAction}>
+          <input type="hidden" name="next" value={destination} />
           <div className="field">
             <label htmlFor="username">Usuário</label>
             <input

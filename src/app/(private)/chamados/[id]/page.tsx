@@ -1,3 +1,5 @@
+import { LiveUpdates } from '@/components/live-updates';
+import { operationalRevision } from '@/lib/live-updates';
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import {
@@ -46,6 +48,7 @@ export default async function TicketPage({
   searchParams: Promise<{ criado?: string; eventos?: string; comentarios?: string }>;
 }) {
   const user = await requireUser();
+  const revision = await operationalRevision(user.id);
   const { id } = await params;
   const search = await searchParams;
   const eventsPage = Math.max(1, Number(search.eventos) || 1),
@@ -83,6 +86,7 @@ export default async function TicketPage({
     : [];
   return (
     <>
+      <LiveUpdates initialRevision={revision} />
       <Link href="/chamados" className="back-link">
         <ArrowLeft size={17} />
         Voltar aos chamados

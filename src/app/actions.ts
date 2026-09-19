@@ -5,6 +5,7 @@ import { revalidatePath } from 'next/cache';
 import { ZodError } from 'zod';
 import { Prisma } from '@/generated/prisma/client';
 import { AppError } from '@/lib/errors';
+import { ticketReturnTo } from '@/lib/return-to';
 import { requireUser, SESSION_COOKIE } from '@/lib/auth';
 import { login, logout, changePassword } from '@/lib/auth-service';
 import * as service from '@/lib/services';
@@ -56,7 +57,8 @@ export async function loginAction(_: FormState, form: FormData): Promise<FormSta
   } catch (error) {
     return failure(error);
   }
-  redirect(mustChange ? '/alterar-senha' : '/');
+  const destination = ticketReturnTo(value(form, 'next'));
+  redirect(mustChange ? `/alterar-senha?next=${encodeURIComponent(destination)}` : destination);
 }
 export async function logoutAction() {
   await sameOrigin();
@@ -76,7 +78,7 @@ export async function passwordAction(_: FormState, form: FormData): Promise<Form
   } catch (error) {
     return failure(error);
   }
-  redirect('/login?alterada=1');
+  redirect(`/login?alterada=1&next=${encodeURIComponent(ticketReturnTo(value(form, 'next')))}`);
 }
 function userFields(form: FormData) {
   return {

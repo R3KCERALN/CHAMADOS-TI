@@ -1,3 +1,5 @@
+import { LiveUpdates } from '@/components/live-updates';
+import { operationalRevision } from '@/lib/live-updates';
 import Link from 'next/link';
 import { Plus } from 'lucide-react';
 import { requireUser } from '@/lib/auth';
@@ -17,6 +19,7 @@ export default async function TicketsPage({
 }) {
   const user = await requireUser();
   if (user.role === 'GESTOR') redirect('/gestor');
+  const revision = await operationalRevision(user.id);
   const params = await searchParams,
     employee = user.role === 'FUNCIONARIO';
   const filter = [
@@ -59,6 +62,7 @@ export default async function TicketsPage({
   const companies = employee ? [] : await locationOptions(user.id, false);
   return (
     <>
+      <LiveUpdates initialRevision={revision} />
       <div className="page-heading">
         <div>
           <span className="eyebrow">ACOMPANHAMENTO</span>

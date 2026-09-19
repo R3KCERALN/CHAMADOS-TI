@@ -1,9 +1,15 @@
 import Link from 'next/link';
+import { ticketReturnTo } from '@/lib/return-to';
 import { requireUser } from '@/lib/auth';
 import { passwordAction, logoutAction } from '@/app/actions';
 import { ActionForm, Submit } from '@/components/form';
 import { Brand } from '@/components/shell';
-export default async function PasswordPage() {
+export default async function PasswordPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ next?: string }>;
+}) {
+  const destination = ticketReturnTo((await searchParams).next);
   const user = await requireUser(undefined, true);
   return (
     <main id="main" className="standalone">
@@ -18,6 +24,7 @@ export default async function PasswordPage() {
             : 'Use uma senha longa e exclusiva para esta conta.'}
         </p>
         <ActionForm action={passwordAction}>
+          <input type="hidden" name="next" value={destination} />
           <div className="field">
             <label htmlFor="currentPassword">Senha atual</label>
             <input

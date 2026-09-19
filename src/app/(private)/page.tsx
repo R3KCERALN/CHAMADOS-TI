@@ -1,3 +1,5 @@
+import { LiveUpdates } from '@/components/live-updates';
+import { operationalRevision } from '@/lib/live-updates';
 import Link from 'next/link';
 import { redirect } from 'next/navigation';
 import { Plus, ArrowUpRight, Inbox, Headphones, Clock3, MoveRight } from 'lucide-react';
@@ -10,6 +12,7 @@ import { TicketList } from '@/components/tickets';
 export default async function HomePage() {
   const user = await requireUser();
   if (user.role === 'GESTOR') redirect('/gestor');
+  const revision = await operationalRevision(user.id);
   const employee = user.role === 'FUNCIONARIO';
   const { tickets } = await listTickets(user.id, employee ? 'todos' : 'meus');
   const today = resolvePeriod({ periodo: 'hoje' });
@@ -45,6 +48,7 @@ export default async function HomePage() {
       ]);
   return (
     <>
+      <LiveUpdates initialRevision={revision} />
       <div className="page-heading">
         <div>
           <span className="eyebrow">

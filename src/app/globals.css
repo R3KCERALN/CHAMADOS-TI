@@ -2327,3 +2327,28 @@ tbody tr:hover {
 .quick-identity-tabs .button {
   transition: none;
 }
+
+.push-control {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem;
+  margin-bottom: 0.8rem;
+  color: var(--muted);
+}
+.push-control .button {
+  min-height: 40px;
+  padding: 0.4rem 0.7rem;
+  font-size: 0.8rem;
+}
+.push-control p {
+  flex-basis: 100%;
+}
+.live-status {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  font-size: 0.75rem;
+  color: var(--muted);
+  margin-bottom: 1rem;
+}
