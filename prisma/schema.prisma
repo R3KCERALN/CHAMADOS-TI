@@ -79,6 +79,8 @@ model Department {
   @@unique([organizationId, name])
 }
 model User {
+  ticketRevision BigInt @default(0)
+  pushSubscriptions PushSubscription[]
   organizationId String
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
   id                 String @id @default(cuid())
@@ -191,6 +193,7 @@ model TicketParticipant {
   @@index([userId])
 }
 model TicketEvent {
+  pushDeliveries PushDelivery[]
   id            String @id @default(cuid())
   sequence      Int @unique @default(autoincrement())
   ticketId      String
@@ -246,6 +249,8 @@ model UserAudit {
 }
 
 model Organization {
+  ticketRevision BigInt @default(0)
+  pushSubscriptions PushSubscription[]
   id String @id @default(cuid())
   name String
   active Boolean @default(true)
@@ -303,4 +308,40 @@ model UserUnitAccess {
   unit Unit @relation(fields: [unitId], references: [id], onDelete: Restrict)
   @@id([userId, unitId])
   @@index([unitId])
+}
+
+model PushSubscription {
+  id String @id @default(cuid())
+  userId String
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organizationId String
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  endpoint String
+  endpointHash String @unique
+  p256dh String
+  auth String
+  sessionHash String
+  active Boolean @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  deliveries PushDelivery[]
+  @@index([organizationId, userId, active])
+  @@index([sessionHash])
+}
+model PushDelivery {
+  id String @id @default(cuid())
+  eventId String
+  event TicketEvent @relation(fields: [eventId], references: [id], onDelete: Restrict)
+  subscriptionId String
+  subscription PushSubscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+  status String @default("PENDING")
+  attempts Int @default(0)
+  availableAt DateTime @default(now())
+  leaseToken String?
+  createdAt DateTime @default(now())
+  finishedAt DateTime?
+  lastStatus Int?
+  @@unique([eventId, subscriptionId])
+  @@index([status, availableAt])
+  @@index([createdAt])
 }

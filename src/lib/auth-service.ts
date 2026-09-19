@@ -85,7 +85,16 @@ export async function getSessionUser(token: string | undefined) {
     : null;
 }
 export async function logout(token: string | undefined) {
-  if (token) await db.session.deleteMany({ where: { tokenHash: tokenHash(token) } });
+  if (token)
+    await db.$transaction(async (tx) => {
+      const session = await tx.session.findUnique({
+        where: { tokenHash: tokenHash(token) },
+        select: { userId: true },
+      });
+      if (session) await tx.$queryRaw`SELECT id FROM "User" WHERE id=${session.userId} FOR UPDATE`;
+      await tx.pushSubscription.deleteMany({ where: { sessionHash: tokenHash(token) } });
+      await tx.session.deleteMany({ where: { tokenHash: tokenHash(token) } });
+    });
 }
 export async function changePassword(userId: string, currentPassword: string, newPassword: string) {
   if (currentPassword === newPassword)
@@ -109,6 +118,7 @@ export async function changePassword(userId: string, currentPassword: string, ne
       data: { passwordHash: hash, mustChangePassword: false },
     });
     await tx.session.deleteMany({ where: { userId } });
+    await tx.pushSubscription.updateMany({ where: { userId }, data: { active: false } });
     await tx.userAudit.create({
       data: { actorId: userId, subjectId: userId, action: 'SENHA_ALTERADA' },
     });

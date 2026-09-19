@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { recordTicketEvent } from './ticket-events';
 import { resolvePeriod } from './period';
 import { db } from './db';
 import { actor } from './access';
@@ -124,6 +125,7 @@ export async function updateUser(actorId: string, userId: string, input: unknown
       select: publicUserSelect,
     });
     await tx.session.deleteMany({ where: { userId } });
+    await tx.pushSubscription.updateMany({ where: { userId }, data: { active: false } });
     await tx.userAudit.create({
       data: {
         actorId,
@@ -157,6 +159,7 @@ export async function resetPassword(actorId: string, userId: string, password: s
       data: { passwordHash, mustChangePassword: true },
     });
     await tx.session.deleteMany({ where: { userId } });
+    await tx.pushSubscription.updateMany({ where: { userId }, data: { active: false } });
     await tx.userAudit.create({ data: { actorId, subjectId: userId, action: 'SENHA_REDEFINIDA' } });
   });
 }
@@ -202,7 +205,7 @@ export async function createTicket(actorId: string, input: unknown, requesterId?
         startedAt: quick ? occurredAt : null,
       },
     });
-    await tx.ticketEvent.create({
+    await recordTicketEvent(tx, {
       data: {
         ticketId: ticket.id,
         actorId,
@@ -213,7 +216,7 @@ export async function createTicket(actorId: string, input: unknown, requesterId?
       },
     });
     if (quick)
-      await tx.ticketEvent.create({
+      await recordTicketEvent(tx, {
         data: {
           ticketId: ticket.id,
           actorId,
@@ -388,7 +391,7 @@ export async function claimTicket(actorId: string, ticketId: string) {
     });
     if (result.count !== 1)
       throw new AppError('Este chamado já foi assumido por outro técnico. Atualize a página.', 409);
-    await tx.ticketEvent.create({
+    await recordTicketEvent(tx, {
       data: {
         ticketId,
         actorId,
@@ -435,7 +438,7 @@ export async function changeStatus(actorId: string, ticketId: string, input: unk
         resolvedAt: data.status === 'RESOLVIDO' ? occurredAt : null,
       },
     });
-    await tx.ticketEvent.create({
+    await recordTicketEvent(tx, {
       data: {
         ticketId,
         actorId,
@@ -479,7 +482,7 @@ export async function setSupport(actorId: string, ticketId: string, userId: stri
       const result = await tx.ticketParticipant.deleteMany({ where: { ticketId, userId } });
       if (!result.count) throw new AppError('Técnico de apoio não encontrado.');
     }
-    await tx.ticketEvent.create({
+    await recordTicketEvent(tx, {
       data: {
         ticketId,
         actorId,
@@ -504,7 +507,7 @@ export async function assignTicket(actorId: string, ticketId: string, userId: st
       throw new AppError('Selecione um técnico ativo.');
     const removed = await tx.ticketParticipant.deleteMany({ where: { ticketId, userId } });
     if (removed.count)
-      await tx.ticketEvent.create({
+      await recordTicketEvent(tx, {
         data: {
           ticketId,
           actorId,
@@ -514,7 +517,7 @@ export async function assignTicket(actorId: string, ticketId: string, userId: st
         },
       });
     await tx.ticket.update({ where: { id: ticketId }, data: { assigneeId: userId } });
-    await tx.ticketEvent.create({
+    await recordTicketEvent(tx, {
       data: {
         ticketId,
         actorId,
@@ -534,7 +537,7 @@ export async function addComment(actorId: string, ticketId: string, content: str
     const comment = await tx.ticketComment.create({
       data: { ticketId, authorId: actorId, content: text },
     });
-    await tx.ticketEvent.create({
+    await recordTicketEvent(tx, {
       data: { ticketId, actorId, type: 'COMENTARIO', metadata: { commentId: comment.id } },
     });
     return comment;
@@ -587,7 +590,7 @@ export async function classifyTicket(actorId: string, ticketId: string, input: u
     )
       throw new AppError('Selecione uma categoria ativa.');
     if (data.categoryId !== ticket.categoryId)
-      await tx.ticketEvent.create({
+      await recordTicketEvent(tx, {
         data: {
           ticketId,
           actorId,
@@ -597,7 +600,7 @@ export async function classifyTicket(actorId: string, ticketId: string, input: u
         },
       });
     if (data.complexity !== ticket.complexity)
-      await tx.ticketEvent.create({
+      await recordTicketEvent(tx, {
         data: {
           ticketId,
           actorId,
@@ -623,7 +626,7 @@ export async function relocateTicket(actorId: string, ticketId: string, input: u
     const location = await resolveLocation(tx, user, { ...data, unitId: data.unitId || null });
     if (ticket.companyId === location.companyId && ticket.unitId === location.unitId) return;
     await tx.ticket.update({ where: { id: ticketId }, data: location });
-    await tx.ticketEvent.create({
+    await recordTicketEvent(tx, {
       data: {
         ticketId,
         actorId,
