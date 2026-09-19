@@ -1,79 +1,49 @@
-# Central de Suporte — regras de arquitetura
+# Central de Suporte — contexto para agentes
 
 ## Escopo e stack
 
-- Monólito Next.js 16 App Router + React + TypeScript strict, PostgreSQL 17, Prisma 7 com adapter-pg, npm e Tailwind 4.
-- Sistema corporativo fechado. Não adicionar signup, autenticação externa, SaaS, IA, Supabase, Firebase ou microserviços.
-- A V1.2 inclui organização, localizações, solicitantes sem conta, gestão e métricas conforme docs/metrics.md. Push, offline, inventário, IA, pontuação, ranking e integrações continuam fora do escopo.
-- Não fazer deploy externo sem pedido. O projeto usa execução local e Docker Compose apenas para o banco.
-- Dev/build usam Webpack por compatibilidade com o ambiente restrito (o Turbopack requer uma porta interna indisponível aqui). Isso não altera o App Router nem a arquitetura.
+- Monólito interno Next.js 16 App Router, React, TypeScript strict, Tailwind 4, Prisma 7/adapter-pg, PostgreSQL 17 e npm; Docker Compose só para o banco. Sem deploy externo nesta fase.
+- Sistema fechado: sem signup, autenticação externa, SaaS comercial, IA, microserviços, push, offline completo, inventário, integrações, reabertura, ranking ou score. `dev`/`build` usam Webpack pela incompatibilidade local do Turbopack; validar antes de trocar.
 
-## Segurança e acesso
+## Segurança e permissões
 
-- A autorização real fica no servidor. `src/lib/auth.ts` valida sessões nas páginas/actions e `src/lib/access.ts` relê o ator no banco para cada operação.
-- Nunca aceitar role, autor, setor de abertura ou técnico principal do cliente como fonte de autorização. IDs recebidos devem passar pelas regras do serviço.
-- FUNCIONARIO só lê/comenta os próprios chamados. TI/ADMIN veem a fila; apenas responsável principal ou ADMIN alteram status, apoio e responsável. GESTOR tem relatórios e CSV, mas não acessa detalhes operacionais de chamados. Somente ADMIN/GESTOR podem acessar /gestor e suas consultas/exportações. TI não acessa indicadores de colegas.
-- Todas as mutações web são Server Actions com verificação explícita de Origin contra APP_URL, além da proteção do Next.js. Não criar mutações GET.
-- Cookies HttpOnly, SameSite=Lax, validade de 8 horas; Secure obrigatório fora de localhost. Sessões persistem somente hash SHA-256 do token aleatório de 256 bits.
-- Senhas Argon2id (64 MiB, 3 iterações, paralelismo 1), 6–128 caracteres. Nunca logar senha, hash, token, `.env` ou conteúdo de formulários.
-- Usuários novos/resetados obrigatoriamente trocam senha. Inativação, alterações cadastrais e redefinição revogam sessões.
-- Preservar mensagens genéricas de login e limitação persistente de tentativas. Tratar AppError/ZodError sem expor stack traces.
+- Autorizar no servidor: `src/lib/auth.ts` protege rotas/actions; `src/lib/access.ts` relê ator ativo, role e organização. Validar IDs por recurso; jamais confiar em role, registrador, setor ou responsável enviados pelo cliente.
+- FUNCIONARIO só lê/comenta os próprios chamados; TI/ADMIN veem a fila; só responsável principal ou ADMIN gerencia status, apoios e transferência. GESTOR/ADMIN acessam gestão/CSV; GESTOR não vê detalhe operacional, TI não vê indicadores individuais dos colegas. Só ADMIN administra cadastros.
+- Mutações web: Server Actions, `Origin` validado contra `APP_URL`, nenhuma mutação por GET. Preservar limite persistente e erro genérico de login; não expor stack traces.
+- Senhas/PINs: 6–128 caracteres, inclusive numéricos, Argon2id (64 MiB/3 iterações/paralelismo 1). Novas/redefinidas exigem troca; alterações de usuário/senha revogam sessões. Sessão de 8 h: apenas SHA-256 do token aleatório de 256 bits no banco; cookie HttpOnly/SameSite=Lax, Secure fora de localhost.
 
 ## Persistência e concorrência
 
-- Mudanças de chamado e eventos de auditoria são atômicos, na mesma transação.
-- Assumir usa UPDATE condicional (`NOVO` e responsável null). Não substituir por read-then-write sem lock.
-- Outras mudanças usam row lock do chamado. Eventos têm sequência monotônica para desempatar timestamps dentro da mesma transação.
-- Apoio é relação TicketParticipant, nunca array/JSON. Não confundir apoio com responsável principal.
-- Dados essenciais de evento (ator, destino, status, motivo, timestamp) são colunas; JSON apenas para informações auxiliares.
-- Setor do chamado é snapshot relacional do setor do solicitante na abertura; não recalcular ao editar o usuário.
-- Não apagar usuários/chamados/eventos/comentários com histórico. A V1 só permite desativação. FKs restritivas preservam a rastreabilidade.
-- Alterações de admins usam advisory lock para preservar ao menos um administrador ativo. Não permitir auto-desativação/rebaixamento.
-- Migrations SQL versionadas são a fonte de evolução; preservar CHECK constraints adicionais. Nunca executar reset/drop no banco de aplicação para testar.
-
-## Interface e manutenção
-
-- Português do Brasil, mobile-first para funcionário e TI, HTML semântico e labels explícitos.
-- Evitar bibliotecas de UI quando componentes pequenos resolverem. CSS usa tokens e componentes locais, com Tailwind disponível.
-- Não usar fontes externas: o sistema deve funcionar localmente sem buscar assets em terceiros.
-- PWA não pode cachear páginas privadas ou dados de usuários. Service worker atual só prepara instalação.
-- Datas em UTC; APP_TIMEZONE em src/lib/config.ts (padrão America/Belem) centraliza exibição e filtros. Não hardcode fuso em outros módulos. Chamados/equipe/comentários paginados em 20 e timeline em 30 registros.
-- Não substituir serviços por mocks nem ignorar erros para fazer testes passarem.
-
-## Validação
-
-- Executar `npm run lint`, `npm run typecheck`, `npm test` e `npm run build` após mudanças relevantes.
-- `npm run test:e2e` usa o build de produção e uma porta dedicada (3100). Não reutiliza servidor da aplicação.
-- Testes criam um banco aleatório `central_test_*` e removem só esse banco. PostgreSQL local precisa estar ativo.
-- E2E usa Chrome local quando instalado, ou Chromium do Playwright. Screenshots/traces ficam em test-results, ignorado pelo Git.
-- Não commitar `.env`, node_modules, `.next`, Prisma gerado, credenciais ou artefatos de testes.
-- Overrides de deepmerge-ts e mysql2 corrigem advisories transitivos do Prisma CLI; verificar compatibilidade e auditoria ao atualizar.
-
-## Gestão e métricas
-
-- Leia docs/metrics.md antes de mudar consultas; o contrato diferencia coortes de criação, resolução, participação e backlog atual.
-- Agregações em src/lib/analytics-query.ts e analytics-service.ts usam SQL parametrizado e eventos. Nunca envie todos os chamados ao cliente para calcular métricas.
-- Categoria e complexidade opcionais, alteradas por TI/ADMIN, com evento atômico. Funcionário continua abrindo somente com descrição/impacto.
-- Apoio removido permanece nas métricas históricas via eventos. Somente o responsável final recebe a resolução. Não converter tempo de ciclo em horas individuais.
-- Histórico incompleto é indisponível, nunca zero inventado. Mediana usa percentile_cont e amostra explícita.
-- CSV autentica e autoriza, neutraliza fórmulas e usa paginação por chave em snapshot repeatable-read.
-- Dados fictícios apenas em central_suporte_demo com SEED_DEMO=true e .env.demo ignorado. Nunca popular banco real com seed de demonstração.
-- Senhas/PINs de 6–128 caracteres são decisão explícita do usuário; não exigir apenas números nem restaurar mínimo 12.
+- Estado do Ticket e `TicketEvent` mudam na mesma transação. Assumir usa UPDATE condicional (`NOVO`, sem responsável); demais mutações usam row lock. Sequência de eventos desempata timestamps iguais; colunas guardam dados essenciais da auditoria, JSON só auxilia.
+- Apoio é `TicketParticipant`, distinto do principal; preservar eventos de apoio/transferência. Categoria e complexidade são opcionais, alteradas por TI/ADMIN com evento. Setor captura a referência do solicitante cadastrado na abertura; nome livre não recebe setor inferido.
+- Preservar FKs/histórico: usuários, filiais e unidades só são desativados na interface. Mudanças de ADMIN usam advisory lock para manter um ADMIN ativo; vedada auto-desativação/rebaixamento. Migrations SQL incrementais preservam CHECKs/triggers; nunca resetar dados nem reescrever migrations aplicadas.
 
 ## Organização e localizações
 
-- Leia docs/organization-model.md antes de alterar escopo, identidade do solicitante ou permissões de localização.
-- Toda entidade principal possui organizationId explícito. Derive o valor do ator autenticado; nunca aceite tenant do cliente. Todas as consultas sensíveis, inclusive opções, contadores, SQL analítico e CSV, devem restringir organização.
-- Login/sessão usam APP_ORGANIZATION_ID do servidor e rejeitam organização inativa. Não adicionar troca de tenant ou SaaS comercial. Username e número de chamado mantêm unicidade global nesta instalação.
-- Preservar triggers de integridade organizacional e imutabilidade da Company de Unit. Não duplicar organizationId em filhos quando o escopo é derivado e protegido.
-- Company é CNPJ, Unit é local físico opcional. Company pode não ter Units. Labels da interface em organization-labels.ts.
-- CNPJ numérico normalizado, 14 dígitos e verificadores locais. Unicidade dentro da Organization; nenhuma API externa.
-- FUNCIONARIO usa Company principal/adicionais e Units autorizadas. TI atende toda a organização. Validar a combinação Company/Unit no servidor.
-- Novos chamados sempre gravam openedByUserId e requesterName. requesterId é opcional. Não criar User fictício; setor manual desconhecido é null.
-- requesterName é snapshot: não alterar ao editar nome do User. Não presumir Company ou autoria de registros antigos; nullable histórico é deliberado.
-- Atendimento Rápido textual requer Company explícita. Não sugerir Company por nome nem atribuir setor do TI ao solicitante.
-- Métricas precisam de LEFT JOIN para solicitante/setor opcionais, mantendo Sem filial/Sem unidade/Sem setor. Preservar as definições de tempos existentes.
-- Filiais/unidades somente desativadas; não apagar histórico. Demo adiciona localizações apenas ao banco separado e preserva contas/senhas.
+- `Organization → Company` (Filial) `→ Unit` opcional. Company é CNPJ; Unit é local físico e não troca de Company após criação. CNPJ: 14 dígitos normalizados, verificadores locais, único por organização. Rótulos em `src/lib/organization-labels.ts`.
+- Entidades principais têm `organizationId`; filhos podem derivá-lo. Login/sessão usam `APP_ORGANIZATION_ID` e rejeitam organização inativa. Escopar consultas, opções, busca, métricas e CSV pelo ator; triggers rejeitam relações cruzadas. Username e número de chamado seguem globalmente únicos nesta instalação.
+- FUNCIONARIO usa Companies principal/adicionais e Units autorizadas; validar Company/Unit no servidor e rejeitar locais inativos para novas aberturas. TI atende toda a organização. Regras exatas de concessão de Units: `docs/organization-model.md`.
+- Novo Ticket exige Company, `openedByUserId` e `requesterName` como snapshot da abertura; não recalcular o nome após editar User. `requesterId` é opcional. Abertura comum usa o logado como registrador/solicitante. Atendimento Rápido aceita User ou nome livre sem criar conta; nome livre exige Company explícita e deixa setor nulo. Não adivinhar localização/autoria de legados: Company/registrador podem ser nulos. Incluir esses chamados em busca, relatórios e CSV.
+
+## Métricas
+
+- `docs/metrics.md` é o contrato de coortes e tempos. Backlog é atual; só o responsável final recebe resolução; apoio removido continua histórico. Tempo ativo de ciclo não é hora individual. Histórico insuficiente é indisponível, nunca zero inventado.
+- Agregar no PostgreSQL com SQL parametrizado e JOINs opcionais para solicitante/setor; preservar “Sem filial/unidade/setor”. CSV só para GESTOR/ADMIN, com mesmos filtros, neutralização de fórmulas e lotes em snapshot `repeatable-read`.
+
+## UI e operação
+
+- Português do Brasil; funcionário/TI mobile-first. Abertura comum pede só descrição e impacto; Atendimento Rápido permanece curto e destacado. Reutilizar componentes locais.
+- Timestamps em UTC; `APP_TIMEZONE` em `src/lib/config.ts` (padrão `America/Belem`) rege exibição/filtros. PWA não pode cachear páginas/dados privados; sem fontes externas. Listas paginadas: chamados/equipe/comentários 20, timeline 30.
+
+## Validação e comandos
+
+- Com PostgreSQL local: `npm run lint`, `npm run typecheck`, `npm test`, `npm run build`, `npm run test:e2e`; após mudar dependências, `npm audit`. Testes usam banco descartável `central_test_*`; E2E usa build na porta 3100.
+- Seed fictício só em `central_suporte_demo` com `SEED_DEMO=true`; nunca popular o banco principal. `.env.demo` e demais segredos não são versionados.
+
+## Referências obrigatórias
+
+- `README.md`: operação/escopo; `docs/metrics.md`: indicadores/CSV; `docs/organization-model.md`: isolamento, localizações, identidade e legados. Consultá-los antes de alterar essas áreas.
+- `prisma/schema.prisma` e `prisma/migrations/`: modelo/constraints; `src/lib/services.ts`, `organization-service.ts`, `analytics-query.ts` e `analytics-service.ts`: regras executáveis.
 
 <!-- BEGIN:nextjs-agent-rules -->
 
