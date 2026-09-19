@@ -2,7 +2,7 @@
 
 ## Escopo e stack
 
-- Monólito interno Next.js 16 App Router, React, TypeScript strict, Tailwind 4, Prisma 7/adapter-pg, PostgreSQL 17 e npm; Docker Compose só para o banco. Sem deploy externo nesta fase.
+- Monólito interno Next.js 16 App Router, React, TypeScript strict, Tailwind 4, Prisma 7/adapter-pg, PostgreSQL 17 e npm; Compose local só para banco; produção usa app persistente/PostgreSQL/Caddy conforme `docs/production.md`. Não fazer deploy externo sem pedido.
 - Sistema fechado: sem signup, autenticação externa, SaaS comercial, IA, microserviços, offline completo, inventário, integrações, reabertura, ranking ou score. `dev`/`build` usam Webpack pela incompatibilidade local do Turbopack; validar antes de trocar.
 
 ## Segurança e permissões
@@ -45,6 +45,11 @@
 
 - Com PostgreSQL local: `npm run lint`, `npm run typecheck`, `npm test`, `npm run build`, `npm run test:e2e`; após mudar dependências, `npm audit`. Testes usam banco descartável `central_test_*`; E2E usa build na porta 3100.
 - Seed fictício só em `central_suporte_demo` com `SEED_DEMO=true`; nunca popular o banco principal. `.env.demo` e demais segredos não são versionados.
+
+## Produção
+
+- Consultar `docs/production.md` antes de alterar deploy/operação. `APP_ENV=production` exige HTTPS, cookies Secure, VAPID e worker; app não publica porta e só confia no IP sobrescrito pelo Caddy. Manter limite de login por conta e IP.
+- Imagem standalone sem secrets, papel SQL da aplicação sem DDL, migrations separadas antes do app. Produção, demo e testes usam projetos/bancos distintos. Restore só cria banco novo `central_restore_*`, revoga sessões/push pendente; nunca sobrescrever banco ativo ou desfazer migrations no rollback.
 
 ## Referências obrigatórias
 

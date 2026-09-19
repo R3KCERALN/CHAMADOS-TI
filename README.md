@@ -1,6 +1,6 @@
 # Central de Suporte
 
-V1.3 funcional de uma central interna de atendimento de TI, com operação, gestão e indicadores auditáveis. Monólito full-stack local: Next.js 16.3.5, React 19.3, TypeScript strict, Tailwind CSS 4, PostgreSQL 17 e Prisma 7.10. Sem autenticação externa, serviços pagos ou APIs de IA.
+V1.3 funcional de uma central interna de atendimento de TI, com operação, gestão e indicadores auditáveis. Monólito full-stack: Next.js 16.3.5, React 19.3, TypeScript strict, Tailwind CSS 4, PostgreSQL 17 e Prisma 7.10. Sem autenticação externa, serviços pagos ou APIs de IA.
 
 ## Requisitos
 
@@ -157,7 +157,7 @@ FKs restritivas protegem o histórico. Índices cobrem fila, solicitante, respon
 - Server Actions e endpoints de subscription push validam Origin contra APP_URL; ações também mantêm a proteção nativa do Next.js.
 - Sem operações destrutivas via GET, sem signup, sem exclusão de histórico e sem stack traces nas mensagens ao usuário.
 - Cabeçalhos de proteção contra iframe/sniffing e CSP básica. A CSP ainda permite scripts inline necessários ao Next; endurecimento com nonce pode ser avaliado antes de uma publicação na internet.
-- Não registrar segredos nem cachear dados privados. O limite atual de login é por conta; proteção volumétrica e limitação por IP devem ser configuradas na borda quando houver publicação externa.
+- Não registrar segredos nem cachear dados privados. Login limita tentativas por conta; a configuração de produção acrescenta limite persistente por IP recebido exclusivamente do Caddy. Proteção volumétrica depende da infraestrutura.
 
 ## Testes e verificações
 
@@ -178,7 +178,7 @@ Os testes criam um **banco temporário exclusivo** no mesmo PostgreSQL, aplicam 
 
 `npm run test:e2e`: inicia build de produção na porta 3100, executa o cenário real pelo navegador (desktop e viewport mobile), valida área administrativa, GESTOR, timeline, manifest, ícones, cabeçalhos e rejeição de POST de outra origem. Também executa axe para regras WCAG A/AA nas telas de login, administração, funcionário, detalhe resolvido e atendimento rápido, panorama, equipe e detalhes gerenciais. Valida classificação técnica, filtros e CSV no navegador. Usa Chrome local quando encontrado. Caso contrário, instale apenas o navegador de teste com `npx playwright install chromium`. Screenshots e traces de falhas ficam em `test-results/`.
 
-Validação da entrega: **79 testes de integração e 6 testes E2E**, lint sem avisos, TypeScript sem erros, build de produção aprovado e auditoria npm sem vulnerabilidades conhecidas. As verificações automáticas de acessibilidade não substituem uma avaliação manual completa com tecnologias assistivas.
+Validação da entrega: **81 testes de integração e 6 testes E2E**, além de 2 cenários reaplicados ao container com HTTPS local, lint sem avisos, TypeScript sem erros, build de produção aprovado e auditoria npm sem vulnerabilidades conhecidas. As verificações automáticas de acessibilidade não substituem uma avaliação manual completa com tecnologias assistivas.
 
 `npm audit` verifica dependências. Overrides de deepmerge-ts 8.0.2 e mysql2 3.24.4 corrigem avisos transitivos do Prisma CLI, validados com generate/migrations/testes/build.
 
@@ -292,3 +292,7 @@ Unicidade evento/subscription, reserva concorrente, tópico/tag estável e recib
 Integração usa PostgreSQL real e transporte push controlado para testar destinatários, rollback, concorrência, retries e invalidação sem enviar tráfego externo. E2E cobre atualização entre sessões, contadores, mobile, rascunhos, permissão por clique, endpoints e retorno ao chamado após login, além dos fluxos anteriores. Testes geram chaves efêmeras e desabilitam o worker real.
 
 A entrega real com aplicação fechada/tela bloqueada precisa de validação em dispositivos reais com HTTPS, `APP_URL` correto, `COOKIE_SECURE=true`, contato VAPID e saída de rede liberada. Localhost permite desenvolvimento, mas HTTP pelo IP da rede não é contexto seguro. No iPhone/iPad, use o app instalado na Tela de Início e ative por toque; confira a [documentação WebKit](https://webkit.org/blog/13878/web-push-for-web-apps-on-ios-and-ipados/). A decisão de exibir e o prazo final pertencem ao navegador/sistema operacional; modos de economia, foco e permissões podem interferir. Não há garantia de aviso instantâneo.
+
+## Produção em VPS
+
+Docker multi-stage/standalone, PostgreSQL privado e Caddy HTTPS em `compose.production.yaml`, separados do ambiente local e demo. Use `.env.production.example` e siga **[docs/production.md](docs/production.md)** para configuração, migrations, bootstrap, releases, healthcheck, backup/restore protegido e rollback da aplicação. O processo Next.js permanece ativo para o worker Web Push. Nenhum deploy externo é feito pelo projeto; não executar seed fictício em produção.
