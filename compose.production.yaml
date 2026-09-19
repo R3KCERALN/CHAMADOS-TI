@@ -1,0 +1,110 @@
+name: ${COMPOSE_PROJECT_NAME:?Set COMPOSE_PROJECT_NAME}
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: '3'
+x-db-env: &db-env
+  POSTGRES_DB: ${POSTGRES_DB:?Set POSTGRES_DB}
+  POSTGRES_USER: ${POSTGRES_USER:?Set POSTGRES_USER}
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+x-app-db-env: &app-db-env
+  DB_HOST: db
+  POSTGRES_DB: ${POSTGRES_DB:?Set POSTGRES_DB}
+  APP_DB_USER: ${APP_DB_USER:?Set APP_DB_USER}
+  APP_DB_PASSWORD: ${APP_DB_PASSWORD:?Set APP_DB_PASSWORD}
+services:
+  db:
+    image: ${POSTGRES_IMAGE:-postgres:17-alpine@sha256:f02121de6f74d30d8a94cd1d9584125e2178d7e6c377d8130112d4e52d867995}
+    environment: *db-env
+    restart: unless-stopped
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks: [database]
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U "$$POSTGRES_USER" -d "$$POSTGRES_DB"']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    logging: *logging
+  migrate:
+    image: central-suporte-operations:${RELEASE:?Set RELEASE}
+    build:
+      context: .
+      target: operations
+      args:
+        NODE_IMAGE: ${NODE_IMAGE:-node:24-bookworm-slim@sha256:0e0ff40c39bc087845bfb27465a0df4ea419520094bc35842ff83dd8cbe6f9b6}
+    environment:
+      <<: [*db-env, *app-db-env]
+      APP_ORGANIZATION_ID: ${APP_ORGANIZATION_ID:?Set APP_ORGANIZATION_ID}
+      INITIAL_ORGANIZATION_NAME: ${INITIAL_ORGANIZATION_NAME:-}
+      INITIAL_ADMIN_USERNAME: ${INITIAL_ADMIN_USERNAME:-}
+      INITIAL_ADMIN_PASSWORD: ${INITIAL_ADMIN_PASSWORD:-}
+      INITIAL_ADMIN_NAME: ${INITIAL_ADMIN_NAME:-}
+    networks: [database]
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: 'no'
+    logging: *logging
+  app:
+    image: central-suporte:${RELEASE:?Set RELEASE}
+    build:
+      context: .
+      target: runner
+      args:
+        NODE_IMAGE: ${NODE_IMAGE:-node:24-bookworm-slim@sha256:0e0ff40c39bc087845bfb27465a0df4ea419520094bc35842ff83dd8cbe6f9b6}
+    environment:
+      <<: *app-db-env
+      APP_ENV: production
+      APP_URL: ${APP_URL:?Set APP_URL}
+      APP_DOMAIN: ${APP_DOMAIN:?Set APP_DOMAIN}
+      COOKIE_SECURE: 'true'
+      APP_ORGANIZATION_ID: ${APP_ORGANIZATION_ID:?Set APP_ORGANIZATION_ID}
+      APP_TIMEZONE: ${APP_TIMEZONE:-America/Belem}
+      VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:?Set VAPID_PUBLIC_KEY}
+      VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:?Set VAPID_PRIVATE_KEY}
+      VAPID_SUBJECT: ${VAPID_SUBJECT:?Set VAPID_SUBJECT}
+      PUSH_WORKER_ENABLED: 'true'
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    networks: [database, edge]
+    restart: unless-stopped
+    init: true
+    read_only: true
+    tmpfs:
+      - /tmp
+      - /app/.next/cache:uid=1000,gid=1000
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    stop_grace_period: 30s
+    logging: *logging
+  proxy:
+    image: ${CADDY_IMAGE:-caddy:2-alpine@sha256:de23def33b17fb5d1290b0f6c2add1d70780e52341896c00a4c8a2a2fe9d355e}
+    environment:
+      APP_DOMAIN: ${APP_DOMAIN:?Set APP_DOMAIN}
+      ACME_EMAIL: ${ACME_EMAIL:?Set ACME_EMAIL}
+    ports:
+      - '80:80'
+      - '443:443'
+      - '443:443/udp'
+    volumes:
+      - ./ops/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks: [edge]
+    depends_on:
+      app:
+        condition: service_healthy
+    restart: unless-stopped
+    security_opt: [no-new-privileges:true]
+    logging: *logging
+networks:
+  database:
+    internal: true
+  edge:
+volumes:
+  postgres_data:
+  caddy_data:
+  caddy_config:

@@ -5,6 +5,7 @@ import { revalidatePath } from 'next/cache';
 import { ZodError } from 'zod';
 import { Prisma } from '@/generated/prisma/client';
 import { AppError } from '@/lib/errors';
+import { limitLoginAddress } from '@/lib/login-ip-throttle';
 import { ticketReturnTo } from '@/lib/return-to';
 import { requireUser, SESSION_COOKIE } from '@/lib/auth';
 import { login, logout, changePassword } from '@/lib/auth-service';
@@ -35,6 +36,8 @@ export async function loginAction(_: FormState, form: FormData): Promise<FormSta
   let mustChange = false;
   try {
     await sameOrigin();
+    if (process.env.APP_ENV === 'production')
+      await limitLoginAddress((await headers()).get('x-client-ip'));
     const result = await login(value(form, 'username'), value(form, 'password'));
     mustChange = result.mustChangePassword;
     const secure = process.env.COOKIE_SECURE !== 'false';

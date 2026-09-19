@@ -1,0 +1,16 @@
+node_modules
+.next
+.git
+.env*
+!.env.production.example
+src/generated
+coverage
+test-results
+playwright-report
+backups
+*.dump
+*.log
+*.tsbuildinfo
+.DS_Store
+
+.npmrc

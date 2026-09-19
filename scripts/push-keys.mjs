@@ -3,12 +3,14 @@ import { parse } from 'dotenv';
 import webPush from 'web-push';
 const [file = '.env', subject] = process.argv.slice(2);
 if (
-  !['.env', '.env.demo'].includes(file) ||
+  !['.env', '.env.demo', '.env.production'].includes(file) ||
   !subject ||
   !/^(mailto:|https:\/\/)/.test(subject) ||
   /[\r\n]/.test(subject)
 )
-  throw new Error('Uso: npm run push:keys -- .env mailto:ti@empresa.com (ou .env.demo).');
+  throw new Error(
+    'Uso: npm run push:keys -- .env mailto:ti@empresa.com (ou .env.demo / .env.production).',
+  );
 const env = parse(readFileSync(file));
 if (env.VAPID_PUBLIC_KEY || env.VAPID_PRIVATE_KEY || env.VAPID_SUBJECT)
   throw new Error(

@@ -148,4 +148,5 @@ export function startPushWorker() {
     void tick();
   }, 5000);
   state.pushWorker.unref();
+  console.info('push_worker_started');
 }
