@@ -340,6 +340,9 @@ test('limite global bloqueia tentativas distribuídas entre IPs', async () => {
   const user = await makeUser('FUNCIONARIO');
   for (let i = 1; i <= 50; i++)
     await assert.rejects(login(user.username, 'SenhaIncorreta123', `192.0.2.${i}`), /inválidos/);
-  await assert.rejects(login(user.username, 'SenhaIncorreta123', '192.0.2.51'), /Muitas tentativas/);
+  await assert.rejects(
+    login(user.username, 'SenhaIncorreta123', '192.0.2.51'),
+    /Muitas tentativas/,
+  );
   await assert.rejects(login(user.username, password, '192.0.2.52'), /Muitas tentativas/);
 });
