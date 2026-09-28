@@ -2,7 +2,7 @@ import { notFound } from 'next/navigation';
 import { requireUser } from '@/lib/auth';
 import { db } from '@/lib/db';
 import { organizationLabels as labels } from '@/lib/organization-labels';
-import { ActionForm, Submit } from '@/components/form';
+import { ActionForm, FieldError, Submit } from '@/components/form';
 import { unitAction } from '@/app/actions';
 import { Pagination } from '@/components/pagination';
 import { param, type SearchParams } from '@/lib/period';
@@ -58,7 +58,13 @@ export default async function UnitsPage({ searchParams }: { searchParams: Promis
         <ActionForm action={unitAction}>
           <div className="field">
             <label htmlFor="companyId">{labels.company}</label>
-            <select id="companyId" name="companyId" defaultValue={companyId} required>
+            <select
+              id="companyId"
+              name="companyId"
+              defaultValue={companyId}
+              required
+              aria-describedby="companyId-error"
+            >
               <option value="">Selecione</option>
               {companies
                 .filter((c) => c.active)
@@ -68,10 +74,18 @@ export default async function UnitsPage({ searchParams }: { searchParams: Promis
                   </option>
                 ))}
             </select>
+            <FieldError name="companyId" id="companyId-error" />
           </div>
           <div className="field">
             <label htmlFor="unitName">Nome da {labels.unit.toLowerCase()}</label>
-            <input id="unitName" name="name" maxLength={100} required />
+            <input
+              id="unitName"
+              name="name"
+              maxLength={100}
+              required
+              aria-describedby="unitName-error"
+            />
+            <FieldError name="name" id="unitName-error" />
           </div>
           <div className="field">
             <label htmlFor="code">Código (opcional)</label>
@@ -96,7 +110,9 @@ export default async function UnitsPage({ searchParams }: { searchParams: Promis
                   required
                   maxLength={100}
                   defaultValue={u.name}
+                  aria-describedby={`name-${u.id}-error`}
                 />
+                <FieldError name="name" id={`name-${u.id}-error`} />
               </div>
               <div className="field">
                 <label htmlFor={`code-${u.id}`}>Código (opcional)</label>

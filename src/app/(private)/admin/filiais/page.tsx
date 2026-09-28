@@ -2,7 +2,7 @@ import { notFound } from 'next/navigation';
 import { requireUser } from '@/lib/auth';
 import { db } from '@/lib/db';
 import { organizationLabels as labels } from '@/lib/organization-labels';
-import { ActionForm, Submit } from '@/components/form';
+import { ActionForm, FieldError, Submit } from '@/components/form';
 import { companyAction } from '@/app/actions';
 import { Pagination } from '@/components/pagination';
 import type { SearchParams } from '@/lib/period';
@@ -30,7 +30,9 @@ function Fields({
           minLength={2}
           maxLength={100}
           defaultValue={company?.displayName}
+          aria-describedby={`display-${id}-error`}
         />
+        <FieldError name="displayName" id={`display-${id}-error`} />
       </div>
       <div className="field">
         <label htmlFor={`legal-${id}`}>Razão social (opcional)</label>
@@ -50,7 +52,9 @@ function Fields({
           maxLength={30}
           inputMode="numeric"
           defaultValue={company?.cnpj}
+          aria-describedby={`cnpj-${id}-error`}
         />
+        <FieldError name="cnpj" id={`cnpj-${id}-error`} />
       </div>
       {company && (
         <div className="field">

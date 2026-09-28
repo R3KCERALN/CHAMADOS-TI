@@ -20,7 +20,7 @@ import { organizationLabels as labels } from '@/lib/organization-labels';
 import { formatCnpj } from '@/lib/cnpj';
 import { AppError } from '@/lib/errors';
 import { ticketAction } from '@/app/actions';
-import { ActionForm, Submit } from '@/components/form';
+import { ActionForm, FieldError, Submit } from '@/components/form';
 import { Pagination } from '@/components/pagination';
 import { Status } from '@/components/tickets';
 import {
@@ -114,36 +114,13 @@ export default async function TicketPage({
               <MessageSquareText size={19} />
               <h2>O que precisamos resolver</h2>
             </div>
+            <p className="ticket-impact">
+              <span>Impacto informado</span>
+              <strong className={ticket.impact === 'BLOQUEADO' ? 'danger-text' : ''}>
+                {impactLabels[ticket.impact]}
+              </strong>
+            </p>
             <p className="description">{ticket.description}</p>
-            <div className="ticket-facts">
-              <div>
-                <span>{labels.company}</span>
-                <strong>
-                  {ticket.company?.displayName || labels.noCompany}
-                  {ticket.unit && ` · ${ticket.unit.name}`}
-                </strong>
-                {ticket.company && <small>CNPJ {formatCnpj(ticket.company.cnpj)}</small>}
-              </div>
-              <div>
-                <span>Registrado por</span>
-                <strong>{ticket.openedByUser?.name || 'Não registrado (legado)'}</strong>
-              </div>
-              <div>
-                <span>Solicitante</span>
-                <strong>{ticket.requesterName}</strong>
-                {!ticket.requesterId && <small>Solicitante informado manualmente</small>}
-              </div>
-              <div>
-                <span>Setor na abertura</span>
-                <strong>{ticket.department?.name || 'Sem setor'}</strong>
-              </div>
-              <div>
-                <span>Impacto informado</span>
-                <strong className={ticket.impact === 'BLOQUEADO' ? 'danger-text' : ''}>
-                  {impactLabels[ticket.impact]}
-                </strong>
-              </div>
-            </div>
             {ticket.waitingReason && (
               <div className="waiting-note">
                 <Clock3 size={18} />
@@ -160,6 +137,100 @@ export default async function TicketPage({
               </p>
             )}
           </section>
+          {tech && (ticket.status === 'NOVO' || editable) && (
+            <section className="panel padded primary-actions">
+              <div className="section-title">
+                <ArrowRightLeft size={19} />
+                <h2>Próximo passo</h2>
+              </div>
+              {ticket.status === 'NOVO' && (
+                <ActionForm action={ticketAction}>
+                  <Hidden id={id} intent="claim" />
+                  <Submit>Assumir chamado</Submit>
+                </ActionForm>
+              )}
+              {editable && ticket.status === 'AGUARDANDO' && (
+                <ActionForm action={ticketAction}>
+                  <Hidden id={id} intent="status" />
+                  <input type="hidden" name="status" value="EM_ATENDIMENTO" />
+                  <Submit>Retomar atendimento</Submit>
+                </ActionForm>
+              )}
+              {editable && ticket.status === 'EM_ATENDIMENTO' && (
+                <details className="action-details">
+                  <summary>Colocar em aguardando</summary>
+                  <ActionForm action={ticketAction}>
+                    <Hidden id={id} intent="status" />
+                    <input type="hidden" name="status" value="AGUARDANDO" />
+                    <div className="field">
+                      <label htmlFor="waitingReason">Motivo da espera</label>
+                      <select id="waitingReason" name="waitingReason" required defaultValue="">
+                        <option value="" disabled>
+                          Selecione o motivo
+                        </option>
+                        {Object.entries(waitingLabels).map(([key, label]) => (
+                          <option key={key} value={key}>
+                            {label}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="field">
+                      <label htmlFor="waiting-note">Detalhes da espera</label>
+                      <textarea
+                        id="waiting-note"
+                        name="note"
+                        rows={2}
+                        maxLength={1000}
+                        placeholder="Obrigatório para outro motivo"
+                      />
+                    </div>
+                    <Submit className="button secondary">Confirmar espera</Submit>
+                  </ActionForm>
+                </details>
+              )}
+              {editable && (
+                <>
+                  <details className="action-details">
+                    <summary className="resolve-summary">
+                      <CheckCircle2 size={17} />
+                      Resolver chamado
+                    </summary>
+                    <ActionForm action={ticketAction}>
+                      <Hidden id={id} intent="status" />
+                      <input type="hidden" name="status" value="RESOLVIDO" />
+                      <div className="field">
+                        <label htmlFor="resolution">Como foi resolvido? (opcional)</label>
+                        <textarea id="resolution" name="note" rows={3} maxLength={1000} />
+                      </div>
+                      <p className="muted small">O solicitante verá o chamado como resolvido.</p>
+                      <Submit>Confirmar resolução</Submit>
+                    </ActionForm>
+                  </details>
+                  <details className="action-details">
+                    <summary>Transferir responsável</summary>
+                    <ActionForm action={ticketAction}>
+                      <Hidden id={id} intent="assign" />
+                      <div className="field">
+                        <label htmlFor="assign-user">Novo responsável principal</label>
+                        <select id="assign-user" name="userId" required defaultValue="">
+                          <option value="" disabled>
+                            Selecione um técnico
+                          </option>
+                          {technicians.map((t) => (
+                            <option key={t.id} value={t.id}>
+                              {t.name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <Submit className="button secondary">Transferir chamado</Submit>
+                    </ActionForm>
+                  </details>
+                </>
+              )}
+            </section>
+          )}
           <section className="panel padded">
             <div className="section-title">
               <MessageSquareText size={19} />
@@ -277,6 +348,35 @@ export default async function TicketPage({
           </section>
         </div>
         <aside className="detail-aside">
+          <section className="panel padded ticket-context">
+            <div className="section-title">
+              <UserRound size={19} />
+              <h2>Contexto do chamado</h2>
+            </div>
+            <div className="ticket-facts">
+              <div>
+                <span>{labels.company}</span>
+                <strong>
+                  {ticket.company?.displayName || labels.noCompany}
+                  {ticket.unit && ` · ${ticket.unit.name}`}
+                </strong>
+                {ticket.company && <small>CNPJ {formatCnpj(ticket.company.cnpj)}</small>}
+              </div>
+              <div>
+                <span>Registrado por</span>
+                <strong>{ticket.openedByUser?.name || 'Não registrado (legado)'}</strong>
+              </div>
+              <div>
+                <span>Solicitante</span>
+                <strong>{ticket.requesterName}</strong>
+                {!ticket.requesterId && <small>Solicitante informado manualmente</small>}
+              </div>
+              <div>
+                <span>Setor na abertura</span>
+                <strong>{ticket.department?.name || 'Sem setor'}</strong>
+              </div>
+            </div>
+          </section>
           {tech && (
             <section className="panel padded">
               <h2>Localização</h2>
@@ -302,6 +402,7 @@ export default async function TicketPage({
                     id="technical-category"
                     name="categoryId"
                     defaultValue={ticket.categoryId || ''}
+                    aria-describedby="categoryId-error"
                   >
                     <option value="">Sem categoria</option>
                     {categories.map((c) => (
@@ -311,6 +412,7 @@ export default async function TicketPage({
                       </option>
                     ))}
                   </select>
+                  <FieldError name="categoryId" id="categoryId-error" />
                 </div>
                 <div className="field">
                   <label htmlFor="technical-complexity">Complexidade operacional</label>
@@ -318,6 +420,7 @@ export default async function TicketPage({
                     id="technical-complexity"
                     name="complexity"
                     defaultValue={ticket.complexity || ''}
+                    aria-describedby="complexity-error"
                   >
                     <option value="">Não classificada</option>
                     {Object.entries(complexityLabels).map(([key, label]) => (
@@ -326,6 +429,7 @@ export default async function TicketPage({
                       </option>
                     ))}
                   </select>
+                  <FieldError name="complexity" id="complexity-error" />
                 </div>
                 <Submit className="button secondary">Salvar classificação</Submit>
               </ActionForm>
@@ -340,12 +444,6 @@ export default async function TicketPage({
             <p className="assignee-name">{ticket.assignee?.name || 'Aguardando atribuição'}</p>
             {ticket.startedAt && (
               <p className="muted small">Iniciado em {formatDate(ticket.startedAt)}</p>
-            )}
-            {tech && ticket.status === 'NOVO' && (
-              <ActionForm action={ticketAction}>
-                <Hidden id={id} intent="claim" />
-                <Submit>Assumir chamado</Submit>
-              </ActionForm>
             )}
             <div className="support-block">
               <span className="eyebrow">TÉCNICOS DE APOIO</span>
@@ -392,90 +490,6 @@ export default async function TicketPage({
               </ActionForm>
             )}
           </section>
-          {editable && (
-            <section className="panel padded">
-              <div className="section-title">
-                <ArrowRightLeft size={19} />
-                <h2>Próximo passo</h2>
-              </div>
-              {ticket.status === 'AGUARDANDO' && (
-                <ActionForm action={ticketAction}>
-                  <Hidden id={id} intent="status" />
-                  <input type="hidden" name="status" value="EM_ATENDIMENTO" />
-                  <Submit>Retomar atendimento</Submit>
-                </ActionForm>
-              )}
-              {ticket.status === 'EM_ATENDIMENTO' && (
-                <details className="action-details">
-                  <summary>Colocar em aguardando</summary>
-                  <ActionForm action={ticketAction}>
-                    <Hidden id={id} intent="status" />
-                    <input type="hidden" name="status" value="AGUARDANDO" />
-                    <div className="field">
-                      <label htmlFor="waitingReason">Motivo da espera</label>
-                      <select id="waitingReason" name="waitingReason" required defaultValue="">
-                        <option value="" disabled>
-                          Selecione o motivo
-                        </option>
-                        {Object.entries(waitingLabels).map(([key, label]) => (
-                          <option key={key} value={key}>
-                            {label}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                    <div className="field">
-                      <label htmlFor="waiting-note">Detalhes da espera</label>
-                      <textarea
-                        id="waiting-note"
-                        name="note"
-                        rows={2}
-                        maxLength={1000}
-                        placeholder="Obrigatório para outro motivo"
-                      />
-                    </div>
-                    <Submit className="button secondary">Confirmar espera</Submit>
-                  </ActionForm>
-                </details>
-              )}
-              <details className="action-details">
-                <summary className="resolve-summary">
-                  <CheckCircle2 size={17} />
-                  Resolver chamado
-                </summary>
-                <ActionForm action={ticketAction}>
-                  <Hidden id={id} intent="status" />
-                  <input type="hidden" name="status" value="RESOLVIDO" />
-                  <div className="field">
-                    <label htmlFor="resolution">Como foi resolvido? (opcional)</label>
-                    <textarea id="resolution" name="note" rows={3} maxLength={1000} />
-                  </div>
-                  <p className="muted small">O solicitante verá o chamado como resolvido.</p>
-                  <Submit>Confirmar resolução</Submit>
-                </ActionForm>
-              </details>
-              <details className="action-details">
-                <summary>Transferir responsável</summary>
-                <ActionForm action={ticketAction}>
-                  <Hidden id={id} intent="assign" />
-                  <div className="field">
-                    <label htmlFor="assign-user">Novo responsável principal</label>
-                    <select id="assign-user" name="userId" required defaultValue="">
-                      <option value="" disabled>
-                        Selecione um técnico
-                      </option>
-                      {technicians.map((t) => (
-                        <option key={t.id} value={t.id}>
-                          {t.name}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <Submit className="button secondary">Transferir chamado</Submit>
-                </ActionForm>
-              </details>
-            </section>
-          )}
           <p className="aside-note">Cada atualização fica registrada no histórico deste chamado.</p>
         </aside>
       </div>

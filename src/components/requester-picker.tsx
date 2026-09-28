@@ -1,6 +1,7 @@
 'use client';
 import { useEffect, useState } from 'react';
 import { LocationFields, type LocationCompany } from './location-fields';
+import { FieldError } from './form';
 type Person = {
   id: string;
   name: string;
@@ -80,7 +81,20 @@ export function RequesterPicker({ companies }: { companies: LocationCompany[] })
               required
               placeholder="João - Reposição"
               autoComplete="off"
+              aria-describedby="requesterName-error"
             />
+            <FieldError name="requesterName" id="requesterName-error" />
+          </div>
+        ) : selected ? (
+          <div className="selected-person" aria-live="polite">
+            <span>
+              <strong>{selected.name}</strong>
+              <small>{selected.department.name}</small>
+            </span>
+            <button type="button" className="button subtle" onClick={() => setSelected(null)}>
+              Trocar
+            </button>
+            <input type="hidden" name="requesterId" value={selected.id} />
           </div>
         ) : (
           <>
@@ -99,17 +113,13 @@ export function RequesterPicker({ companies }: { companies: LocationCompany[] })
               }}
               autoComplete="off"
             />
-            <input type="hidden" name="requesterId" value={selected?.id || ''} />
+            <input type="hidden" name="requesterId" value="" />
             <div className="picker-results" aria-busy={loading}>
               {people.map((person) => (
-                <label
-                  key={person.id}
-                  className={`person-option ${selected?.id === person.id ? 'selected' : ''}`}
-                >
+                <label key={person.id} className="person-option">
                   <input
                     type="radio"
                     name="personChoice"
-                    checked={selected?.id === person.id}
                     onChange={() => setSelected(person)}
                     required
                   />
@@ -130,6 +140,7 @@ export function RequesterPicker({ companies }: { companies: LocationCompany[] })
                 {error}
               </p>
             )}
+            <FieldError name="requesterId" />
           </>
         )}
       </fieldset>

@@ -152,18 +152,14 @@ export function PushControl({ userId }: { userId: string }) {
     inactive: 'Receba avisos neste dispositivo.',
   };
   return (
-    <div className="push-control">
+    <div className="push-control" data-state={state}>
       <Bell size={16} aria-hidden="true" />
       <span className="small" aria-live="polite">
         {message[state]}
       </span>
       {['active', 'inactive'].includes(state) && (
         <button className="button subtle" type="button" disabled={busy} onClick={toggle}>
-          {busy
-            ? 'Aguarde…'
-            : state === 'active'
-              ? 'Desativar neste dispositivo'
-              : 'Ativar notificações'}
+          {busy ? 'Aguarde…' : state === 'active' ? 'Desativar' : 'Ativar notificações'}
         </button>
       )}
       {error && (

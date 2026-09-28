@@ -5,7 +5,7 @@ import { requireUser } from '@/lib/auth';
 import { db } from '@/lib/db';
 import { locationOptions } from '@/lib/organization-service';
 import { publicUserSelect } from '@/lib/auth-service';
-import { ActionForm, Submit } from '@/components/form';
+import { ActionForm, FieldError, Submit } from '@/components/form';
 import { UserFields } from '@/components/user-fields';
 import { updateUserAction, resetPasswordAction } from '@/app/actions';
 export default async function EditUserPage({ params }: { params: Promise<{ id: string }> }) {
@@ -60,8 +60,13 @@ export default async function EditUserPage({ params }: { params: Promise<{ id: s
               minLength={6}
               maxLength={128}
               autoComplete="new-password"
+              aria-describedby="temporaryPassword-hint password-error"
               required
             />
+            <p id="temporaryPassword-hint" className="field-hint">
+              Use pelo menos 6 caracteres. A troca será obrigatória no próximo login.
+            </p>
+            <FieldError name="password" id="password-error" />
           </div>
           <Submit className="button secondary">Redefinir senha</Submit>
         </ActionForm>

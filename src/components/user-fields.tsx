@@ -1,6 +1,7 @@
 import { UserLocationFields } from './user-location-fields';
 import type { LocationCompany } from './location-fields';
 import { roleLabels } from '@/lib/labels';
+import { FieldError } from './form';
 export function UserFields({
   departments,
   companies,
@@ -32,7 +33,9 @@ export function UserFields({
           maxLength={100}
           required
           autoComplete="name"
+          aria-describedby="name-error"
         />
+        <FieldError name="name" id="name-error" />
       </div>
       <div className="field">
         <label htmlFor="username">Username</label>
@@ -47,10 +50,12 @@ export function UserFields({
           autoComplete="off"
           autoCapitalize="none"
           spellCheck={false}
+          aria-describedby="username-hint username-error"
         />
-        <p className="field-hint">
+        <p id="username-hint" className="field-hint">
           Único por pessoa. Use letras minúsculas, números, ponto, hífen ou sublinhado.
         </p>
+        <FieldError name="username" id="username-error" />
       </div>
       <div className="form-grid">
         <div className="field">
@@ -60,6 +65,7 @@ export function UserFields({
             name="departmentId"
             defaultValue={user?.departmentId || ''}
             required
+            aria-describedby="departmentId-error"
           >
             <option value="" disabled>
               Selecione um setor
@@ -70,16 +76,24 @@ export function UserFields({
               </option>
             ))}
           </select>
+          <FieldError name="departmentId" id="departmentId-error" />
         </div>
         <div className="field">
           <label htmlFor="role">Perfil de acesso</label>
-          <select id="role" name="role" defaultValue={user?.role || 'FUNCIONARIO'} required>
+          <select
+            id="role"
+            name="role"
+            defaultValue={user?.role || 'FUNCIONARIO'}
+            required
+            aria-describedby="role-error"
+          >
             {Object.entries(roleLabels).map(([key, label]) => (
               <option key={key} value={key}>
                 {label}
               </option>
             ))}
           </select>
+          <FieldError name="role" id="role-error" />
         </div>
       </div>
       <UserLocationFields companies={companies} user={user} />
@@ -105,10 +119,12 @@ export function UserFields({
             maxLength={128}
             required
             autoComplete="new-password"
+            aria-describedby="password-hint password-error"
           />
-          <p className="field-hint">
+          <p id="password-hint" className="field-hint">
             Mínimo de 6 caracteres. A troca será obrigatória no primeiro login.
           </p>
+          <FieldError name="password" id="password-error" />
         </div>
       )}
     </>

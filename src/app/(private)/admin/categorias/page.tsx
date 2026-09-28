@@ -1,7 +1,7 @@
 import { notFound } from 'next/navigation';
 import { requireUser } from '@/lib/auth';
 import { db } from '@/lib/db';
-import { ActionForm, Submit } from '@/components/form';
+import { ActionForm, FieldError, Submit } from '@/components/form';
 import { categoryAction } from '@/app/actions';
 import { Pagination } from '@/components/pagination';
 import type { SearchParams } from '@/lib/period';
@@ -37,7 +37,15 @@ export default async function CategoriesPage({
         <ActionForm action={categoryAction}>
           <div className="field">
             <label htmlFor="new-category">Nome da categoria</label>
-            <input id="new-category" name="name" required minLength={2} maxLength={100} />
+            <input
+              id="new-category"
+              name="name"
+              required
+              minLength={2}
+              maxLength={100}
+              aria-describedby="new-category-error"
+            />
+            <FieldError name="name" id="new-category-error" />
           </div>
           <Submit>Criar categoria</Submit>
         </ActionForm>
@@ -56,7 +64,9 @@ export default async function CategoriesPage({
                   minLength={2}
                   maxLength={100}
                   defaultValue={c.name}
+                  aria-describedby={`category-${c.id}-error`}
                 />
+                <FieldError name="name" id={`category-${c.id}-error`} />
               </div>
               <div className="field">
                 <label htmlFor={`active-${c.id}`}>Situação</label>

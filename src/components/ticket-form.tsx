@@ -1,4 +1,4 @@
-import { ActionForm, Submit } from './form';
+import { ActionForm, FieldError, Submit } from './form';
 import { createTicketAction } from '@/app/actions';
 import { impactLabels } from '@/lib/labels';
 export function TicketForm({
@@ -9,7 +9,7 @@ export function TicketForm({
   quick?: boolean;
 }) {
   return (
-    <ActionForm action={createTicketAction}>
+    <ActionForm action={createTicketAction} className={`form-stack${quick ? ' quick-form' : ''}`}>
       {children}
       <div className="field">
         <label htmlFor="description">
@@ -22,9 +22,13 @@ export function TicketForm({
           maxLength={5000}
           rows={quick ? 3 : 5}
           placeholder="Conte brevemente o que você precisa. Não é necessário usar termos técnicos."
+          aria-describedby="description-hint description-error"
           required
         />
-        <p className="field-hint">Evite incluir senhas ou informações confidenciais.</p>
+        <p id="description-hint" className="field-hint">
+          Evite incluir senhas ou informações confidenciais.
+        </p>
+        <FieldError name="description" id="description-error" />
       </div>
       {quick ? (
         <div className="field">
@@ -36,6 +40,7 @@ export function TicketForm({
               </option>
             ))}
           </select>
+          <FieldError name="impact" />
         </div>
       ) : (
         <fieldset>
@@ -57,6 +62,7 @@ export function TicketForm({
               </label>
             ))}
           </div>
+          <FieldError name="impact" />
         </fieldset>
       )}
       <div className="form-end">

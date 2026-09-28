@@ -1,6 +1,7 @@
 'use client';
 import { useState } from 'react';
 import { organizationLabels as labels } from '@/lib/organization-labels';
+import { FieldError } from './form';
 export type LocationCompany = {
   id: string;
   displayName: string;
@@ -50,6 +51,7 @@ export function LocationFields({
             name={companyName}
             value={company}
             required={!optional}
+            aria-describedby={`${companyName}-error`}
             onChange={(e) => {
               setCompany(e.target.value);
               setUnit('');
@@ -66,6 +68,7 @@ export function LocationFields({
               </option>
             ))}
           </select>
+          <FieldError name={companyName} id={`${companyName}-error`} />
         </div>
       )}
       {units.length > 0 ? (
@@ -75,6 +78,7 @@ export function LocationFields({
             id={unitName}
             name={unitName}
             value={unit}
+            aria-describedby={`${unitName}-error`}
             onChange={(e) => setUnit(e.target.value)}
           >
             <option value="">{labels.noUnit}</option>
@@ -85,6 +89,7 @@ export function LocationFields({
               </option>
             ))}
           </select>
+          <FieldError name={unitName} id={`${unitName}-error`} />
         </div>
       ) : (
         <input type="hidden" name={unitName} value="" />

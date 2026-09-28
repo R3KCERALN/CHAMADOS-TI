@@ -71,11 +71,18 @@ test('cenário completo no navegador: admin, funcionário, TI, histórico e aten
   await firstLogin(page, process.env.INITIAL_ADMIN_USERNAME!, process.env.INITIAL_ADMIN_PASSWORD!);
   await page.goto('/admin/filiais');
   await expect(page.getByText(/Organização atual:/)).toBeVisible();
+  const companyForm = page.locator('form').filter({ has: page.locator('#display-new') });
+  await companyForm.getByLabel('Nome de exibição').fill('Filial inválida preservada');
+  await companyForm.getByLabel('CNPJ', { exact: true }).fill('11111111111111');
+  await companyForm.getByRole('button', { name: 'Criar filial', exact: true }).click();
+  await expect(companyForm.locator('#cnpj-new-error')).toContainText('CNPJ válido');
+  await expect(companyForm.getByLabel('Nome de exibição')).toHaveValue(
+    'Filial inválida preservada',
+  );
   for (const name of ['E2E Castanhal', 'E2E Belém']) {
-    const form = page.locator('form').filter({ has: page.locator('#display-new') });
-    await form.getByLabel('Nome de exibição').fill(name);
-    await form.getByLabel('CNPJ', { exact: true }).fill(syntheticCnpj());
-    await form.getByRole('button', { name: 'Criar filial', exact: true }).click();
+    await companyForm.getByLabel('Nome de exibição').fill(name);
+    await companyForm.getByLabel('CNPJ', { exact: true }).fill(syntheticCnpj());
+    await companyForm.getByRole('button', { name: 'Criar filial', exact: true }).click();
     await expect(page.getByRole('heading', { name, exact: true })).toBeVisible();
   }
   await accessible(page);
@@ -104,8 +111,17 @@ test('cenário completo no navegador: admin, funcionário, TI, histórico e aten
   await createUser(page, 'Gustavo Gestor', 'gustavo.gestor', 'GESTOR');
   await page.screenshot({ path: 'test-results/screenshots/admin-desktop.png', fullPage: true });
   await accessible(page);
-  await logout(page);
   await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto('/admin/usuarios');
+  expect(await page.locator('.mobile-nav a').count()).toBeLessThanOrEqual(5);
+  await expect(page.locator('.mobile-nav a[aria-current="page"]')).toHaveText('Admin');
+  const mobileNavigation = page.locator('.mobile-nav');
+  expect(
+    await mobileNavigation.evaluate(
+      (navigation) => navigation.scrollWidth <= navigation.clientWidth,
+    ),
+  ).toBe(true);
+  await logout(page);
   await firstLogin(page, 'ana.financeiro', temporary);
   await noOverflow(page);
   await accessible(page);
@@ -127,13 +143,32 @@ test('cenário completo no navegador: admin, funcionário, TI, histórico e aten
   await logout(page);
   await firstLogin(page, 'bruno.ti', temporary);
   await page.setViewportSize({ width: 1440, height: 1000 });
+  await expect(page.getByText('Atendimento próximo. Trabalho em movimento.')).toHaveCount(0);
+  await expect(page.getByText('VERSÃO 1.2')).toHaveCount(0);
   await page.screenshot({ path: 'test-results/screenshots/ti-desktop.png', fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/chamados?filtro=novos');
+  await expect(page.getByRole('searchbox', { name: 'Buscar chamado' })).toBeVisible();
+  await expect(page.getByText('Mais filtros', { exact: true })).toBeVisible();
+  expect(await page.locator('.mobile-nav a').count()).toBeLessThanOrEqual(5);
+  await expect(page.locator('.mobile-nav a[aria-current="page"]')).toHaveText('Chamados');
   await page
     .getByRole('link')
     .filter({ hasText: 'Não consigo abrir o sistema financeiro' })
     .click();
+  const description = page.locator('.description');
+  const primaryAction = page.locator('.primary-actions');
+  const ticketContext = page.locator('.ticket-context');
+  await expect(description).toBeVisible();
+  await expect(primaryAction).toBeVisible();
+  await expect(ticketContext).toBeAttached();
+  const [descriptionBox, actionBox, contextBox] = await Promise.all([
+    description.boundingBox(),
+    primaryAction.boundingBox(),
+    ticketContext.boundingBox(),
+  ]);
+  expect(descriptionBox!.y).toBeLessThan(actionBox!.y);
+  expect(actionBox!.y).toBeLessThan(contextBox!.y);
   await page
     .getByLabel('Categoria técnica', { exact: true })
     .selectOption({ label: 'E2E Rede / Internet' });
@@ -183,10 +218,16 @@ test('cenário completo no navegador: admin, funcionário, TI, histórico e aten
   await login(page, 'bruno.ti', finalPassword);
   await page.goto('/atendimento-rapido');
   await page.getByLabel('Busque pelo nome ou setor e selecione a pessoa').fill('Ana');
-  await page.getByRole('radio', { name: /Ana Financeiro/ }).check();
+  await page.getByRole('radio', { name: /Ana Financeiro/ }).click();
+  await expect(page.locator('.picker-results')).toHaveCount(0);
+  await expect(page.locator('.selected-person')).toContainText('Ana Financeiro');
+  await expect(page.getByRole('button', { name: 'Trocar', exact: true })).toBeVisible();
   await page
     .getByLabel('O que está sendo atendido?')
     .fill('Orientação presencial sobre acesso à pasta compartilhada.');
+  const quickSubmit = page.getByRole('button', { name: 'Iniciar atendimento' });
+  await expect(quickSubmit).toBeVisible();
+  expect((await quickSubmit.boundingBox())!.height).toBeGreaterThanOrEqual(44);
   await noOverflow(page);
   await page.screenshot({ path: 'test-results/screenshots/quick-mobile.png', fullPage: true });
   await accessible(page);
@@ -233,6 +274,12 @@ test('cenário completo no navegador: admin, funcionário, TI, histórico e aten
   await page.getByLabel('Técnico', { exact: true }).selectOption({ label: 'Bruno Técnico' });
   await page.getByRole('button', { name: 'Aplicar filtros' }).click();
   await expect(page).toHaveURL(/periodo=7dias/);
+  await expect(page.getByRole('navigation', { name: 'Seções do panorama' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Resumo', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Demanda', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Backlog', exact: true })).toBeVisible();
+  await expect(page.locator('.active-filter-summary')).toContainText('Financeiro');
+  await expect(page.locator('.active-filter-summary')).toContainText('Bruno Técnico');
   await expect(page.getByRole('heading', { name: 'Demanda por categoria' })).toBeVisible();
   await expect(page.getByText(/chamado\(s\) com histórico incompleto/)).toHaveCount(0);
   await accessible(page);
@@ -241,6 +288,12 @@ test('cenário completo no navegador: admin, funcionário, TI, histórico e aten
     path: 'test-results/screenshots/management-desktop.png',
     fullPage: true,
   });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await noOverflow(page);
+  await expect(page.getByRole('navigation', { name: 'Seções do panorama' })).toBeVisible();
+  await page.setViewportSize({ width: 667, height: 375 });
+  await noOverflow(page);
+  await page.setViewportSize({ width: 1440, height: 1000 });
   const csvLink = await page.getByRole('link', { name: 'Exportar CSV' }).getAttribute('href');
   const csv = await page.request.get(csvLink!);
   expect(csv.status()).toBe(200);
@@ -303,6 +356,12 @@ test('cenário completo no navegador: admin, funcionário, TI, histórico e aten
   await page.goto('/');
   await noOverflow(page);
   await expect(page.getByText('Meus aguardando', { exact: true })).toBeVisible();
+  const queueBox = await page.locator('.list-panel').boundingBox();
+  const secondaryStatsBox = await page.locator('.secondary-operational-stats').boundingBox();
+  expect(queueBox!.y).toBeLessThan(secondaryStatsBox!.y);
+  await page.setViewportSize({ width: 667, height: 375 });
+  await page.goto('/atendimento-rapido');
+  await noOverflow(page);
   expect(consoleErrors).toEqual([]);
 });
 test('manifest, ícones e proteção contra POST de outra origem', async ({ request }) => {

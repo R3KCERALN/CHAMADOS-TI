@@ -60,6 +60,9 @@ export default async function TicketsPage({
         }),
       ]);
   const companies = employee ? [] : await locationOptions(user.id, false);
+  const additionalFilterCount = Object.entries(fields).filter(
+    ([key, current]) => key !== 'q' && Boolean(current),
+  ).length;
   return (
     <>
       <LiveUpdates initialRevision={revision} />
@@ -110,61 +113,69 @@ export default async function TicketsPage({
                 defaultValue={fields.q}
               />
             </div>
-            <div className="filter-grid">
-              <LocationFilter
-                companies={companies}
-                company={fields.companyId}
-                unit={fields.unitId}
-                companyName="companyId"
-                unitName="unitId"
-              />
-              <div className="field">
-                <label htmlFor="categoryId">Categoria</label>
-                <select id="categoryId" name="categoryId" defaultValue={fields.categoryId}>
-                  <option value="">Todas</option>
-                  <option value="none">Sem categoria</option>
-                  {options![0].map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name}
-                    </option>
-                  ))}
-                </select>
+            <details className="queue-more-filters" open={additionalFilterCount > 0}>
+              <summary>
+                Mais filtros
+                {additionalFilterCount > 0 && (
+                  <span className="filter-count">{additionalFilterCount} ativos</span>
+                )}
+              </summary>
+              <div className="filter-grid queue-more-content">
+                <LocationFilter
+                  companies={companies}
+                  company={fields.companyId}
+                  unit={fields.unitId}
+                  companyName="companyId"
+                  unitName="unitId"
+                />
+                <div className="field">
+                  <label htmlFor="categoryId">Categoria</label>
+                  <select id="categoryId" name="categoryId" defaultValue={fields.categoryId}>
+                    <option value="">Todas</option>
+                    <option value="none">Sem categoria</option>
+                    {options![0].map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="field">
+                  <label htmlFor="departmentId">Setor</label>
+                  <select id="departmentId" name="departmentId" defaultValue={fields.departmentId}>
+                    <option value="">Todos</option>
+                    {options![1].map((d) => (
+                      <option key={d.id} value={d.id}>
+                        {d.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="field">
+                  <label htmlFor="impact">Impacto</label>
+                  <select id="impact" name="impact" defaultValue={fields.impact}>
+                    <option value="">Todos</option>
+                    {Object.entries(impactLabels).map(([k, v]) => (
+                      <option key={k} value={k}>
+                        {v}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="field">
+                  <label htmlFor="complexity">Complexidade</label>
+                  <select id="complexity" name="complexity" defaultValue={fields.complexity}>
+                    <option value="">Todas</option>
+                    <option value="none">Não classificada</option>
+                    {Object.entries(complexityLabels).map(([k, v]) => (
+                      <option key={k} value={k}>
+                        {v}
+                      </option>
+                    ))}
+                  </select>
+                </div>
               </div>
-              <div className="field">
-                <label htmlFor="departmentId">Setor</label>
-                <select id="departmentId" name="departmentId" defaultValue={fields.departmentId}>
-                  <option value="">Todos</option>
-                  {options![1].map((d) => (
-                    <option key={d.id} value={d.id}>
-                      {d.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="field">
-                <label htmlFor="impact">Impacto</label>
-                <select id="impact" name="impact" defaultValue={fields.impact}>
-                  <option value="">Todos</option>
-                  {Object.entries(impactLabels).map(([k, v]) => (
-                    <option key={k} value={k}>
-                      {v}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="field">
-                <label htmlFor="complexity">Complexidade</label>
-                <select id="complexity" name="complexity" defaultValue={fields.complexity}>
-                  <option value="">Todas</option>
-                  <option value="none">Não classificada</option>
-                  {Object.entries(complexityLabels).map(([k, v]) => (
-                    <option key={k} value={k}>
-                      {v}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
+            </details>
             <div className="filter-actions">
               <Link className="text-link" href="/chamados">
                 Limpar filtros

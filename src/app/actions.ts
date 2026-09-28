@@ -11,7 +11,11 @@ import { requireUser, SESSION_COOKIE } from '@/lib/auth';
 import { login, logout, changePassword } from '@/lib/auth-service';
 import * as service from '@/lib/services';
 import { saveCompany, saveUnit } from '@/lib/organization-service';
-export type FormState = { error?: string; success?: string };
+export type FormState = {
+  error?: string;
+  success?: string;
+  fieldErrors?: Record<string, string[]>;
+};
 const value = (form: FormData, key: string) => String(form.get(key) ?? '');
 async function sameOrigin() {
   const origin = (await headers()).get('origin');
@@ -25,8 +29,18 @@ async function sameOrigin() {
 function failure(error: unknown): FormState {
   unstable_rethrow(error);
   if (error instanceof AppError) return { error: error.message };
-  if (error instanceof ZodError)
-    return { error: error.issues[0]?.message || 'Verifique os campos informados.' };
+  if (error instanceof ZodError) {
+    const fieldErrors: Record<string, string[]> = {};
+    for (const issue of error.issues) {
+      const field = String(issue.path[0] || '');
+      if (!field) continue;
+      (fieldErrors[field] ||= []).push(issue.message);
+    }
+    return {
+      error: 'Revise os campos indicados para continuar.',
+      fieldErrors,
+    };
+  }
   if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002')
     return { error: 'Já existe um cadastro com este CNPJ, username ou nome. Verifique os dados.' };
   console.error('Falha na operação:', error instanceof Error ? error.name : 'UnknownError');

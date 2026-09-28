@@ -46,23 +46,75 @@ export default async function HomePage() {
           },
         }),
       ]);
+  const operationalItems = counts
+    ? [
+        {
+          label: 'Novos na fila',
+          count: counts[0],
+          href: '/chamados?filtro=novos',
+          icon: Inbox,
+          text: 'Prontos para começar',
+          color: 'blue',
+        },
+        {
+          label: 'Meus em atendimento',
+          count: counts[1],
+          href: '/chamados?filtro=atendimento',
+          icon: Headphones,
+          text: 'Responsável principal',
+          color: 'green',
+        },
+        {
+          label: 'Meus aguardando',
+          count: counts[2],
+          href: '/chamados?filtro=minha-espera',
+          icon: Clock3,
+          text: 'Acompanhe o próximo passo',
+          color: 'amber',
+        },
+        {
+          label: 'Resolvidos hoje',
+          count: counts[3],
+          href: '/chamados?filtro=resolvidos-hoje',
+          icon: Headphones,
+          text: 'Como responsável final',
+          color: 'green',
+        },
+        {
+          label: 'Estou como apoio',
+          count: counts[4],
+          href: '/chamados?filtro=apoio',
+          icon: Headphones,
+          text: 'Chamados ainda abertos',
+          color: 'blue',
+        },
+      ]
+    : [];
+  const operationalCards = (items: typeof operationalItems) =>
+    items.map((item) => (
+      <Link key={item.label} href={item.href} className="stat-card">
+        <div className="stat-top">
+          <span>{item.label}</span>
+          <span className={`stat-icon ${item.color}`}>
+            <item.icon size={19} />
+          </span>
+        </div>
+        <strong>{String(item.count).padStart(2, '0')}</strong>
+        <div className="stat-bottom">
+          <span>{item.text}</span>
+          <MoveRight size={17} />
+        </div>
+      </Link>
+    ));
   return (
     <>
       <LiveUpdates initialRevision={revision} />
       <div className="page-heading">
         <div>
-          <span className="eyebrow">
-            {employee ? 'SEU PONTO DE APOIO' : 'CENTRAL DE OPERAÇÕES'}
-          </span>
           <h1>
             Olá, {user.name.split(' ')[0]}
             <span className="green-dot">.</span>
           </h1>
-          <p>
-            {employee
-              ? 'Vamos deixar seu dia mais simples.'
-              : 'Vamos fazer o trabalho seguir em frente.'}
-          </p>
         </div>
         <span className="today">
           {new Intl.DateTimeFormat('pt-BR', {
@@ -72,16 +124,13 @@ export default async function HomePage() {
           }).format(new Date())}
         </span>
       </div>
-      <section className={`hero ${employee ? 'employee-hero' : ''}`}>
+      <section className={`hero simple-hero ${employee ? 'employee-hero' : 'tech-hero'}`}>
         <div>
-          <span className="eyebrow light">
-            {employee ? 'ESTAMOS AQUI PARA AJUDAR' : 'DA CONVERSA PARA O REGISTRO'}
-          </span>
-          <h2>{employee ? 'Precisa de ajuda?' : 'O atendimento já começou?'}</h2>
+          <h2>{employee ? 'Precisa de ajuda?' : 'Registre um atendimento'}</h2>
           <p>
             {employee
-              ? 'Conte o que aconteceu. O TI cuida do próximo passo.'
-              : 'Registre aquela ajuda por telefone, mensagem ou no corredor. Em poucos segundos.'}
+              ? 'Descreva o problema para abrir um chamado.'
+              : 'Para atendimentos presenciais, por telefone ou mensagem.'}
           </p>
           <Link href={employee ? '/chamados/novo' : '/atendimento-rapido'} className="button white">
             <Plus size={20} />
@@ -89,73 +138,13 @@ export default async function HomePage() {
             <ArrowUpRight size={18} />
           </Link>
         </div>
-        <div className="hero-art" aria-hidden="true">
-          <span className="orbit orbit-one" />
-          <span className="orbit orbit-two" />
-          <span className="hero-symbol">
-            <Headphones size={64} strokeWidth={1.2} />
-          </span>
-          <span className="hero-bubble">Pode contar com a gente.</span>
-        </div>
       </section>
       {counts && (
-        <section className="stats operational-stats" aria-label="Resumo dos atendimentos">
-          {[
-            {
-              label: 'Novos na fila',
-              count: counts[0],
-              href: '/chamados?filtro=novos',
-              icon: Inbox,
-              text: 'Prontos para começar',
-              color: 'blue',
-            },
-            {
-              label: 'Meus em atendimento',
-              count: counts[1],
-              href: '/chamados?filtro=atendimento',
-              icon: Headphones,
-              text: 'Responsável principal',
-              color: 'green',
-            },
-            {
-              label: 'Meus aguardando',
-              count: counts[2],
-              href: '/chamados?filtro=minha-espera',
-              icon: Clock3,
-              text: 'Acompanhe o próximo passo',
-              color: 'amber',
-            },
-            {
-              label: 'Resolvidos hoje',
-              count: counts[3],
-              href: '/chamados?filtro=resolvidos-hoje',
-              icon: Headphones,
-              text: 'Como responsável final',
-              color: 'green',
-            },
-            {
-              label: 'Estou como apoio',
-              count: counts[4],
-              href: '/chamados?filtro=apoio',
-              icon: Headphones,
-              text: 'Chamados ainda abertos',
-              color: 'blue',
-            },
-          ].map((item) => (
-            <Link key={item.label} href={item.href} className="stat-card">
-              <div className="stat-top">
-                <span>{item.label}</span>
-                <span className={`stat-icon ${item.color}`}>
-                  <item.icon size={19} />
-                </span>
-              </div>
-              <strong>{String(item.count).padStart(2, '0')}</strong>
-              <div className="stat-bottom">
-                <span>{item.text}</span>
-                <MoveRight size={17} />
-              </div>
-            </Link>
-          ))}
+        <section
+          className="stats operational-stats primary-operational-stats"
+          aria-label="Prioridades do atendimento"
+        >
+          {operationalCards(operationalItems.slice(0, 2))}
         </section>
       )}
       <section className="panel list-panel">
@@ -174,6 +163,14 @@ export default async function HomePage() {
         </div>
         <TicketList tickets={tickets.slice(0, 5)} employee={employee} />
       </section>
+      {counts && (
+        <section
+          className="stats operational-stats secondary-operational-stats"
+          aria-label="Outros indicadores operacionais"
+        >
+          {operationalCards(operationalItems.slice(2))}
+        </section>
+      )}
       {user.role === 'ADMIN' && (
         <Link href="/admin/usuarios" className="admin-shortcut">
           <span>
