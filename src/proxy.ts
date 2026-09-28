@@ -5,7 +5,7 @@ export function proxy(request: NextRequest) {
   const csp =
     `default-src 'self'; script-src 'self' 'nonce-${nonce}' 'strict-dynamic'` +
     (process.env.NODE_ENV === 'development' ? " 'unsafe-eval'" : '') +
-    "; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'";
+    "; worker-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'";
 
   const requestHeaders = new Headers(request.headers);
   requestHeaders.set('x-nonce', nonce);
@@ -17,5 +17,7 @@ export function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ['/((?!_next/static|_next/image|icons/|favicon\\.ico$|sw\\.js$|manifest\\.webmanifest$).*)'],
+  matcher: [
+    '/((?!_next/static|_next/image|icons/|favicon\\.ico$|sw\\.js$|manifest\\.webmanifest$).*)',
+  ],
 };
