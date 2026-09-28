@@ -17,7 +17,7 @@ async function session(browser: Browser, id: string) {
   });
   await context.addCookies([
     {
-      name: 'central_session',
+      name: process.env.COOKIE_SECURE === 'false' ? 'central_session' : '__Host-central_session',
       value: auth.token,
       url: 'http://localhost:3100',
       httpOnly: true,
