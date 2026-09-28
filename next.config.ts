@@ -14,6 +14,16 @@ const config: NextConfig = {
           { key: 'Permissions-Policy', value: 'camera=(), microphone=(), geolocation=()' },
         ],
       },
+      {
+        source: '/sw.js',
+        headers: [
+          {
+            key: 'Content-Security-Policy',
+            value:
+              "default-src 'self'; script-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'none'",
+          },
+        ],
+      },
     ];
   },
 };

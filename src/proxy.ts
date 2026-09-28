@@ -18,6 +18,13 @@ export function proxy(request: NextRequest) {
 
 export const config = {
   matcher: [
-    '/((?!_next/static|_next/image|icons/|favicon\\.ico$|sw\\.js$|manifest\\.webmanifest$).*)',
+    {
+      source:
+        '/((?!_next/static|_next/image|icons/|favicon\\.ico$|sw\\.js$|manifest\\.webmanifest$).*)',
+      missing: [
+        { type: 'header', key: 'next-router-prefetch' },
+        { type: 'header', key: 'purpose', value: 'prefetch' },
+      ],
+    },
   ],
 };
