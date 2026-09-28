@@ -327,3 +327,22 @@ test('limite de tentativas de login é persistente', async () => {
     await assert.rejects(login(user.username, 'SenhaIncorreta123'), /inválidos/);
   await assert.rejects(login(user.username, password), /Muitas tentativas/);
 });
+test('limite por conta e IP não bloqueia login correto de outro IP', async () => {
+  const user = await makeUser('FUNCIONARIO');
+  for (let i = 0; i < 10; i++)
+    await assert.rejects(login(user.username, 'SenhaIncorreta123', '192.0.2.1'), /inválidos/);
+  await assert.rejects(login(user.username, 'SenhaIncorreta123', '192.0.2.1'), /Muitas tentativas/);
+  await assert.rejects(login(user.username, password, '192.0.2.1'), /Muitas tentativas/);
+  const session = await login(user.username, password, '192.0.2.2');
+  assert.equal((await getSessionUser(session.token))?.id, user.id);
+});
+test('limite global bloqueia tentativas distribuídas entre IPs', async () => {
+  const user = await makeUser('FUNCIONARIO');
+  for (let i = 1; i <= 50; i++)
+    await assert.rejects(login(user.username, 'SenhaIncorreta123', `192.0.2.${i}`), /inválidos/);
+  await assert.rejects(
+    login(user.username, 'SenhaIncorreta123', '192.0.2.51'),
+    /Muitas tentativas/,
+  );
+  await assert.rejects(login(user.username, password, '192.0.2.52'), /Muitas tentativas/);
+});

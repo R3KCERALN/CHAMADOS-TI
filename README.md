@@ -153,6 +153,7 @@ FKs restritivas protegem o histórico. Índices cobrem fila, solicitante, respon
 
 - Argon2id: 64 MiB, 3 iterações, paralelismo 1. Senhas entre 6 e 128 caracteres.
 - Tokens de sessão aleatórios de 256 bits; somente SHA-256 persiste. Cookies HttpOnly/SameSite=Lax e Secure em HTTPS.
+- Em HTTPS, o cookie de sessão usa `__Host-`; o primeiro deploy encerra as sessões existentes e exige novo login.
 - Validação Zod e autorização no servidor por operação. Usuário/role da sessão são consultados no banco, nunca confiados ao formulário.
 - Server Actions e endpoints de subscription push validam Origin contra APP_URL; ações também mantêm a proteção nativa do Next.js.
 - Sem operações destrutivas via GET, sem signup, sem exclusão de histórico e sem stack traces nas mensagens ao usuário.
