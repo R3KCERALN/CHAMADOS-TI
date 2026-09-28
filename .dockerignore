@@ -12,5 +12,15 @@ backups
 *.log
 *.tsbuildinfo
 .DS_Store
+*.key
+*.pem
+*.p12
+*.passphrase
+*.cms
+**/*.key
+**/*.pem
+**/*.p12
+**/*.passphrase
+**/*.cms
 
 .npmrc
