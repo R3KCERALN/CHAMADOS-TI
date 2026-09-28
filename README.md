@@ -158,7 +158,8 @@ FKs restritivas protegem o histórico. Índices cobrem fila, solicitante, respon
 - Server Actions e endpoints de subscription push validam Origin contra APP_URL; ações também mantêm a proteção nativa do Next.js.
 - Sem operações destrutivas via GET, sem signup, sem exclusão de histórico e sem stack traces nas mensagens ao usuário.
 - Cabeçalhos de proteção contra iframe/sniffing e CSP básica. A CSP ainda permite scripts inline necessários ao Next; endurecimento com nonce pode ser avaliado antes de uma publicação na internet.
-- Não registrar segredos nem cachear dados privados. Login limita tentativas por conta; a configuração de produção acrescenta limite persistente por IP recebido exclusivamente do Caddy. Proteção volumétrica depende da infraestrutura.
+- Não registrar segredos nem cachear dados privados. Login: em produção, 10 tentativas/15 min por conta+IP (IP do Caddy) e 50 tentativas/15 min por conta (todos os IPs); fora de produção, 10 tentativas/15 min por conta.
+  Risco residual aceito: ~5 IPs ou IPv6 rotativo ainda podem bloquear temporariamente uma conta; força bruta distribuída fica limitada a 50/15 min por conta. Monitorar 429 recorrentes e preferir senhas além de PINs numéricos para ADMIN.
 
 ## Testes e verificações
 
