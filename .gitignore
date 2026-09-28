@@ -11,7 +11,12 @@ test-results/
 playwright-report/
 .DS_Store
 *.log
+*.key
+*.pem
+*.p12
+*.passphrase
 
 !.env.production.example
 backups/
 *.dump
+*.cms

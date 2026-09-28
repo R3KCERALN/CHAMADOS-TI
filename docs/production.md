@@ -4,7 +4,7 @@
 
 Uma instalação, uma Organization, um processo Next.js persistente (inclui worker Web Push), PostgreSQL 17 e Caddy. `compose.production.yaml` é independente do Compose de desenvolvimento: projeto/volumes próprios, sem banco/porta compartilhados com demo. Não há deploy externo automático.
 
-VPS Linux com Docker Engine e Compose **2.24.4+**, DNS A/AAAA correto e portas TCP 80/443 abertas; UDP 443 é opcional para HTTP/3. Reserve inicialmente 2 vCPU/4 GB RAM e espaço para banco, imagens e backups; ajuste com medição. Compilar na VPS demanda memória adicional. Restrinja SSH no firewall; não exponha Docker, PostgreSQL ou a porta 3000. Mantenha Docker habilitado no boot (`sudo systemctl enable --now docker`).
+VPS Linux com Docker Engine, Compose **2.24.4+** e OpenSSL, DNS A/AAAA correto e portas TCP 80/443 abertas; UDP 443 é opcional para HTTP/3. Reserve inicialmente 2 vCPU/4 GB RAM e espaço para banco, imagens e backups; ajuste com medição. Compilar na VPS demanda memória adicional. Restrinja SSH no firewall; não exponha Docker, PostgreSQL ou a porta 3000. Mantenha Docker habilitado no boot (`sudo systemctl enable --now docker`).
 
 Somente Caddy publica portas. HTTPS/certificados são automáticos; volumes `caddy_data`/`caddy_config` preservam seu estado. O app roda como usuário não root, filesystem somente leitura, cache temporário, sem capabilities. Rede do banco é interna; app conserva saída para os serviços Web Push dos navegadores. Não colocar outro proxy na frente sem revisar origem/IP confiável.
 
@@ -14,7 +14,7 @@ Imagens usam `npm ci` e build multi-stage. `BUILD_STANDALONE=true` só no build 
 
 1. Copie o checkout da versão aprovada para a VPS. Preserve o histórico de migrations.
 2. `cp .env.production.example .env.production && chmod 600 .env.production`.
-3. Preencha **todos os campos vazios**, exceto `BACKUP_COPY_HOOK`. Use valores simples sem aspas para `COMPOSE_PROJECT_NAME`, retenção e hook. O nome do projeto deve ser `central-suporte-prod` ou começar com `central-suporte-prod-`; nunca alterá-lo numa atualização normal.
+3. Preencha os campos de aplicação, banco, organização, ADMIN e VAPID. Configure os campos `BACKUP_*` conforme a seção Backup antes do uso oficial; os dois campos de decriptação ficam vazios até um ensaio/restore. Use valores sem aspas. O nome do projeto deve ser `central-suporte-prod` ou começar com `central-suporte-prod-`; nunca alterá-lo numa atualização normal.
 4. `APP_DOMAIN` é somente o hostname definitivo, sem esquema/caminho. `APP_URL=https://<mesmo-hostname>`. `ACME_EMAIL` é contato operacional real. Mantenha `APP_ORGANIZATION_ID=initial-organization` na instalação inicial; a migration cria essa organização. Não trocar esse ID para renomear a organização.
 5. Gere senhas independentes e aleatórias (por exemplo, `openssl rand -hex 32`) para `POSTGRES_PASSWORD` e `APP_DB_PASSWORD`. O app recebe somente a segunda. `DATABASE_URL` é construída no container com encoding; não duplicar senhas numa URL. O usuário de migrations é dono do schema; `central_app` não pode criar banco/roles/tabelas nem editar o controle de migrations.
 6. Defina credenciais temporárias do ADMIN e nome da organização. Não existem credenciais padrão. O bootstrap mantém a organização histórica já criada e não renomeia dados existentes.
@@ -71,7 +71,45 @@ Containers permanentes têm `restart: unless-stopped`: após reboot voltam autom
 ./ops/backup.sh
 ```
 
-Arquivo `backups/<projeto>/central_<UTC>_<pid>.dump`: formato custom do pg_dump, comprimido, consistente mesmo com app ativo, sem owners/grants. Pasta 0700, arquivos 0600; escrita `.partial` só vira backup após dump/listagem válidos. `BACKUP_RETENTION_DAYS` (padrão 14) remove somente arquivos com esse padrão mais antigos após sucesso. Com `BACKUP_COPY_HOOK=/caminho/absoluto/executavel`, o hook recebe o arquivo final como único argumento; erro impede retenção e retorna falha. O hook futuro pode copiar para armazenamento externo com credenciais próprias, sem incluí-las no script/repositório. Não há cópia externa implementada/contratada nesta entrega.
+Arquivo `backups/<projeto>/central_<UTC>_<pid>.dump`: formato custom do pg_dump, comprimido, consistente mesmo com app ativo, sem owners/grants. Pasta 0700, arquivos 0600; escrita `.partial` só vira backup após dump/listagem válidos. `BACKUP_RETENTION_DAYS` (padrão 14) remove somente arquivos com esse padrão mais antigos **depois** do dump e da cópia externa terem sucesso. Uma falha conserva o backup local e retorna código diferente de zero.
+
+### Cópia externa criptografada
+
+`ops/copy-backup-encrypted.sh` cifra cada dump com CMS/AES-256 e depois assina o conteúdo cifrado com uma identidade RSA separada. O resultado continua sendo um único `.cms`: o restore verifica a assinatura fixada **antes** de descriptografar. A chave privada de decriptação não é necessária para o backup e deve ficar fora da VPS quando não houver ensaio/recuperação. A chave privada de assinatura fica somente no produtor do backup, com modo 0600; o certificado público correspondente deve fazer parte do kit de recuperação e não pode ser obtido do mesmo armazenamento não confiável no momento do restore.
+
+Gere pares exclusivos fora do repositório:
+
+```bash
+umask 077
+openssl req -x509 -newkey rsa:3072 -sha256 -nodes \
+  -keyout /caminho-protegido/backup-private.pem \
+  -out /caminho-protegido/backup-public.crt \
+  -days 3650 -subj '/CN=Central de Suporte Backup'
+chmod 600 /caminho-protegido/backup-private.pem
+openssl req -x509 -newkey rsa:3072 -sha256 -nodes \
+  -keyout /etc/central-suporte/backup-signing-private.pem \
+  -out /etc/central-suporte/backup-signing-public.crt \
+  -days 3650 -subj '/CN=Central de Suporte Backup Signing'
+chmod 600 /etc/central-suporte/backup-signing-private.pem
+```
+
+Configure `.env.production`:
+
+```dotenv
+BACKUP_COPY_HOOK=/opt/central-suporte/ops/copy-backup-encrypted.sh
+BACKUP_ENCRYPTION_CERT_FILE=/etc/central-suporte/backup-public.crt
+BACKUP_SIGNING_CERT_FILE=/etc/central-suporte/backup-signing-public.crt
+BACKUP_SIGNING_KEY_FILE=/etc/central-suporte/backup-signing-private.pem
+BACKUP_EXTERNAL_DESTINATION=/mnt/backup-externo/central-suporte
+BACKUP_EXTERNAL_COPY_COMMAND=
+BACKUP_FAILURE_HOOK=/usr/local/sbin/central-suporte-backup-alert
+```
+
+Com `BACKUP_EXTERNAL_COPY_COMMAND` vazio, o destino precisa ser um diretório absoluto existente, gravável e montado em armazenamento externo. A cópia única já contém cifra e assinatura, é comparada e promovida de `.partial` para `.cms` de forma atômica. Para SSH, armazenamento de objetos ou outra ferramenta, informe um executável absoluto: ele recebe `arquivo_autenticado_cifrado destino`, deve concluir a cópia antes de retornar e devolver código zero somente após confirmação. O projeto não interpreta a string de destino nem exige um fornecedor. Credenciais pertencem ao executável/arquivo protegido, nunca ao repositório.
+
+Registre o fingerprint do certificado público de assinatura no procedimento de recuperação e preserve esse certificado fora da VPS e fora do destino dos backups. Em uma rotação, mantenha os certificados públicos antigos para restaurar arquivos históricos, selecionando em `BACKUP_SIGNING_CERT_FILE` o certificado correspondente. Perda da chave privada impede novos backups assinados, mas não impede verificar/restaurar os existentes; suspeita de comprometimento exige rotação e revisão dos arquivos produzidos desde o possível incidente.
+
+`BACKUP_FAILURE_HOOK` é opcional e recebe `backup_failed etapa arquivo_local`. Pode chamar e-mail local, syslog ou monitoramento futuro. Se dump, validação ou cópia falhar, `backup.sh` registra `backup_failed`, preserva o código de erro e tenta o alerta; falha do próprio alerta também fica explícita. Cron e systemd conseguem detectar a falha pelo código de saída. Não inclua secrets nos argumentos ou na saída desses hooks.
 
 Agende na VPS, por exemplo no crontab do operador Docker, ajustando o diretório real:
 
@@ -79,7 +117,7 @@ Agende na VPS, por exemplo no crontab do operador Docker, ajustando o diretório
 15 2 * * * cd /opt/central-suporte && ./ops/backup.sh >> /var/log/central-suporte-backup.log 2>&1
 ```
 
-Configure também rotação desse log e alerta operacional de falha. Backup no mesmo disco não protege contra perda da VPS: antes de uso real, defina cópia externa criptografada, retenção e ensaio periódico de restore. Backups contêm dados pessoais, hashes e subscriptions; restrinja acesso. Preserve `.env.production`/VAPID separadamente em cofre/backup seguro e o volume Caddy quando necessário; o dump contém apenas o banco. RPO depende da frequência dos backups, sem recuperação ponto a ponto/WAL nesta etapa.
+Configure também rotação desse log e confira periodicamente se o alerta chega ao responsável. Backup no mesmo disco não protege contra perda da VPS: habilite a cópia externa antes do uso real e ensaie restore periodicamente. O destino externo deve ter sua própria retenção; `BACKUP_RETENTION_DAYS` cuida apenas dos dumps locais. Backups contêm dados pessoais, hashes e subscriptions; restrinja acesso. Preserve `.env.production`/VAPID separadamente em cofre/backup seguro e o volume Caddy quando necessário; o dump contém apenas o banco. RPO depende da frequência dos backups, sem recuperação ponto a ponto/WAL nesta etapa.
 
 ## Restore protegido e promoção
 
@@ -89,7 +127,13 @@ Aceite somente backups confiáveis: dump pode conter SQL executável. **O script
 ./ops/restore.sh backups/central-suporte-prod/ARQUIVO.dump central_restore_20260919 RESTORE:central-suporte-prod:central_restore_20260919
 ```
 
-O arquivo é validado, `createdb` recusa alvo existente e restore usa transação única/exit-on-error. Falha pode deixar um banco novo vazio para inspeção; não há exclusão automática. Negócio/histórico são restaurados; sessões são removidas, subscriptions desativadas e entregas PENDING canceladas para não ressuscitar logins/notificações antigas. Os usuários terão que entrar e ativar notificações novamente.
+Para restaurar diretamente uma cópia externa `.cms`, disponibilize o certificado público de assinatura previamente fixado e, temporariamente, o certificado/chave de decriptação. Configure `BACKUP_SIGNING_CERT_FILE`, `BACKUP_DECRYPTION_CERT_FILE` e `BACKUP_DECRYPTION_KEY_FILE`; a chave privada deve estar 0600. O conteúdo cifrado verificado e o dump decifrado existem apenas em diretório temporário 0700 e são removidos ao terminar:
+
+```bash
+./ops/restore.sh /mnt/backup-externo/central_....dump.cms central_restore_20260919 RESTORE:central-suporte-prod:central_restore_20260919
+```
+
+O restore rejeita imediatamente `.cms` sem assinatura, alterado ou assinado por outra identidade, antes de usar a chave de decriptação. Depois valida o dump; `createdb` recusa alvo existente e restore usa transação única/exit-on-error. O alvo precisa começar com `central_restore_`, nunca pode ser o banco configurado e exige confirmação com projeto+banco. Falha pode deixar um banco novo vazio para inspeção; não há exclusão automática. Negócio/histórico são restaurados; sessões são removidas, subscriptions desativadas e entregas PENDING canceladas para não ressuscitar logins/notificações antigas. Os usuários terão que entrar e ativar notificações novamente.
 
 Valide contagens/histórico e versão das migrations no banco novo antes de promover. Para ensaio, mantenha-o isolado: **não altere POSTGRES_DB nem pare a aplicação**. Conceda acesso apenas quando decidir promover. Para recuperação real:
 
