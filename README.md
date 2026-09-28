@@ -153,11 +153,14 @@ FKs restritivas protegem o histórico. Índices cobrem fila, solicitante, respon
 
 - Argon2id: 64 MiB, 3 iterações, paralelismo 1. Senhas entre 6 e 128 caracteres.
 - Tokens de sessão aleatórios de 256 bits; somente SHA-256 persiste. Cookies HttpOnly/SameSite=Lax e Secure em HTTPS.
+- Em HTTPS, o cookie de sessão usa `__Host-`; o primeiro deploy encerra as sessões existentes e exige novo login.
 - Validação Zod e autorização no servidor por operação. Usuário/role da sessão são consultados no banco, nunca confiados ao formulário.
 - Server Actions e endpoints de subscription push validam Origin contra APP_URL; ações também mantêm a proteção nativa do Next.js.
 - Sem operações destrutivas via GET, sem signup, sem exclusão de histórico e sem stack traces nas mensagens ao usuário.
-- Cabeçalhos de proteção contra iframe/sniffing e CSP básica. A CSP ainda permite scripts inline necessários ao Next; endurecimento com nonce pode ser avaliado antes de uma publicação na internet.
-- Não registrar segredos nem cachear dados privados. Login limita tentativas por conta; a configuração de produção acrescenta limite persistente por IP recebido exclusivamente do Caddy. Proteção volumétrica depende da infraestrutura.
+- Cabeçalhos contra iframe/sniffing; CSP por requisição com nonce e `strict-dynamic` via `src/proxy.ts`, sem `unsafe-inline` em scripts (estilos inline ainda permitidos) e `worker-src 'self'`.
+  `/sw.js` recebe CSP mínima estática.
+- Não registrar segredos nem cachear dados privados. Login: em produção, 10 tentativas/15 min por conta+IP, 50 tentativas/15 min por conta (todos os IPs) e 100 tentativas/15 min por IP recebido exclusivamente do Caddy (IPs corporativos compartilhados); fora de produção, 10 tentativas/15 min por conta.
+  Risco residual aceito: ~5 IPs ou IPv6 rotativo ainda podem bloquear temporariamente uma conta; força bruta distribuída limitada a 50 tentativas/15 min por conta. Monitorar 429 recorrentes e preferir senhas além de PINs numéricos para ADMIN. Proteção volumétrica depende da infraestrutura.
 
 ## Testes e verificações
 

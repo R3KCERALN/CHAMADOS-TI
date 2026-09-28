@@ -50,9 +50,10 @@ export async function loginAction(_: FormState, form: FormData): Promise<FormSta
   let mustChange = false;
   try {
     await sameOrigin();
-    if (process.env.APP_ENV === 'production')
-      await limitLoginAddress((await headers()).get('x-client-ip'));
-    const result = await login(value(form, 'username'), value(form, 'password'));
+    const address =
+      process.env.APP_ENV === 'production' ? (await headers()).get('x-client-ip') : undefined;
+    if (address !== undefined) await limitLoginAddress(address);
+    const result = await login(value(form, 'username'), value(form, 'password'), address);
     mustChange = result.mustChangePassword;
     const secure = process.env.COOKIE_SECURE !== 'false';
     if (
@@ -81,7 +82,11 @@ export async function logoutAction() {
   await sameOrigin();
   const jar = await cookies();
   await logout(jar.get(SESSION_COOKIE)?.value);
-  jar.delete(SESSION_COOKIE);
+  jar.set(SESSION_COOKIE, '', {
+    expires: new Date(0),
+    path: '/',
+    secure: process.env.COOKIE_SECURE !== 'false',
+  });
   redirect('/login');
 }
 export async function passwordAction(_: FormState, form: FormData): Promise<FormState> {
@@ -91,7 +96,11 @@ export async function passwordAction(_: FormState, form: FormData): Promise<Form
     if (value(form, 'password') !== value(form, 'confirmation'))
       throw new AppError('A confirmação não corresponde à nova senha.');
     await changePassword(user.id, value(form, 'currentPassword'), value(form, 'password'));
-    (await cookies()).delete(SESSION_COOKIE);
+    (await cookies()).set(SESSION_COOKIE, '', {
+      expires: new Date(0),
+      path: '/',
+      secure: process.env.COOKIE_SECURE !== 'false',
+    });
   } catch (error) {
     return failure(error);
   }
