@@ -26,21 +26,29 @@ export const hashPassword = (password: string) =>
   });
 const tokenHash = (token: string) => createHash('sha256').update(token).digest('hex');
 let dummyHash: Promise<string> | undefined;
-export async function login(username: string, password: string) {
+export async function login(username: string, password: string, address?: string | null) {
   const parsed = usernameSchema.safeParse(username);
   if (!parsed.success || password.length > 128)
     throw new AppError('Usuário ou senha inválidos.', 401);
-  const key = tokenHash(`${APP_ORGANIZATION_ID}:${parsed.data}`);
+  const accountKey = tokenHash(`${APP_ORGANIZATION_ID}:${parsed.data}`);
+  const throttles = address
+    ? [
+        { key: tokenHash(`${APP_ORGANIZATION_ID}:${parsed.data}:ip:${address}`), limit: 10 },
+        { key: accountKey, limit: 50 },
+      ]
+    : [{ key: accountKey, limit: 10 }];
   const now = new Date();
   await db.loginThrottle.deleteMany({ where: { expiresAt: { lt: now } } });
   const windowEnd = new Date(Date.now() + 15 * 60 * 1000);
-  const throttle = await db.loginThrottle.upsert({
-    where: { key },
-    create: { key, expiresAt: windowEnd },
-    update: { attempts: { increment: 1 } },
-  });
-  if (throttle.attempts > 10)
-    throw new AppError('Muitas tentativas. Aguarde 15 minutos e tente novamente.', 429);
+  for (const { key, limit } of throttles) {
+    const throttle = await db.loginThrottle.upsert({
+      where: { key },
+      create: { key, expiresAt: windowEnd },
+      update: { attempts: { increment: 1 } },
+    });
+    if (throttle.attempts > limit)
+      throw new AppError('Muitas tentativas. Aguarde 15 minutos e tente novamente.', 429);
+  }
   const user = await db.user.findFirst({
     where: { username: parsed.data, organizationId: APP_ORGANIZATION_ID },
     include: { organization: true },
@@ -66,7 +74,7 @@ export async function login(username: string, password: string) {
       throw new AppError('Usuário ou senha inválidos.', 401);
     await tx.session.deleteMany({ where: { expiresAt: { lt: now } } });
     await tx.session.create({ data: { tokenHash: tokenHash(token), userId: user.id, expiresAt } });
-    await tx.loginThrottle.deleteMany({ where: { key } });
+    await tx.loginThrottle.deleteMany({ where: { key: { in: throttles.map(({ key }) => key) } } });
   });
   return { token, expiresAt, mustChangePassword: user.mustChangePassword };
 }

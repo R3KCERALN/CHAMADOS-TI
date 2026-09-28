@@ -50,9 +50,9 @@ export async function loginAction(_: FormState, form: FormData): Promise<FormSta
   let mustChange = false;
   try {
     await sameOrigin();
-    if (process.env.APP_ENV === 'production')
-      await limitLoginAddress((await headers()).get('x-client-ip'));
-    const result = await login(value(form, 'username'), value(form, 'password'));
+    const address = process.env.APP_ENV === 'production' ? (await headers()).get('x-client-ip') : undefined;
+    if (address !== undefined) await limitLoginAddress(address);
+    const result = await login(value(form, 'username'), value(form, 'password'), address);
     mustChange = result.mustChangePassword;
     const secure = process.env.COOKIE_SECURE !== 'false';
     if (
