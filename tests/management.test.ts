@@ -450,3 +450,19 @@ test('evento final registrado depois de resolvedAt não invalida intervalos anti
   assert.equal(result.summary.incomplete, 0);
   assert.equal(result.summary.active.median, 10800);
 });
+test('fila de novos mostra o mais antigo primeiro; demais filas e funcionário, o mais recente', async () => {
+  const marker = `Ordem da fila ${id()}`;
+  const created = [];
+  for (const n of [1, 2, 3])
+    created.push(await createTicket(employee, { description: `${marker} #${n}`, impact: 'BAIXO' }));
+  const ids = created.map((t) => t.id);
+  const order = async (user: string, filter: string) =>
+    (await listTickets(user, filter, 1, { q: marker })).tickets.map((t) => t.id);
+  assert.deepEqual(await order(tech, 'novos'), ids);
+  assert.deepEqual(await order(tech, 'todos'), [...ids].reverse());
+  // Funcionário não usa filtros nem a fila: vê os próprios chamados, do mais recente ao mais antigo.
+  assert.deepEqual(
+    (await order(employee, 'novos')).filter((x) => ids.includes(x)),
+    [...ids].reverse(),
+  );
+});

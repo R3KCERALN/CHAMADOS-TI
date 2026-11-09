@@ -190,7 +190,9 @@ export default async function TicketsPage({
           <h2>
             {total} {total === 1 ? 'chamado' : 'chamados'}
           </h2>
-          <span className="muted small">Mais recentes primeiro</span>
+          <span className="muted small">
+            {!employee && filter === 'novos' ? 'Mais antigos primeiro' : 'Mais recentes primeiro'}
+          </span>
         </div>
         <TicketList tickets={tickets} employee={employee} />
       </section>

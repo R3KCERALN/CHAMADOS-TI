@@ -368,7 +368,11 @@ export async function listTickets(
         category: { select: { name: true } },
         assignee: { select: { name: true } },
       },
-      orderBy: { createdAt: 'desc' },
+      // Triage queue: the oldest NOVO first; ties and every other list stay stable by id.
+      orderBy:
+        user.role !== 'FUNCIONARIO' && filter === 'novos'
+          ? [{ createdAt: 'asc' }, { id: 'asc' }]
+          : [{ createdAt: 'desc' }, { id: 'desc' }],
       take: 20,
       skip: (safePage - 1) * 20,
     }),

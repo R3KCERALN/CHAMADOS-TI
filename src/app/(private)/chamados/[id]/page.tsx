@@ -380,7 +380,10 @@ export default async function TicketPage({
           {tech && (
             <section className="panel padded">
               <h2>Localização</h2>
-              <ActionForm action={ticketAction}>
+              <ActionForm
+                key={`location-${ticket.companyId}-${ticket.unitId}`}
+                action={ticketAction}
+              >
                 <input type="hidden" name="ticketId" value={id} />
                 <input type="hidden" name="intent" value="location" />
                 <LocationFields
@@ -394,7 +397,10 @@ export default async function TicketPage({
               <p className="muted small">
                 Opcional. Não altera o impacto informado pelo solicitante.
               </p>
-              <ActionForm action={ticketAction}>
+              <ActionForm
+                key={`classify-${ticket.categoryId}-${ticket.complexity}`}
+                action={ticketAction}
+              >
                 <Hidden id={id} intent="classify" />
                 <div className="field">
                   <label htmlFor="technical-category">Categoria técnica</label>
