@@ -4,19 +4,19 @@ import { Plus, ArrowUpRight } from 'lucide-react';
 import { requireUser } from '@/lib/auth';
 import { adminUsers } from '@/lib/services';
 import { roleLabels } from '@/lib/labels';
+import { Pagination } from '@/components/pagination';
 export default async function UsersPage({
   searchParams,
 }: {
-  searchParams: Promise<{ criado?: string; busca?: string }>;
+  searchParams: Promise<{ criado?: string; busca?: string; pagina?: string }>;
 }) {
   const user = await requireUser();
   if (user.role !== 'ADMIN') notFound();
   const params = await searchParams;
-  const allUsers = await adminUsers(user.id);
-  const query = (params.busca || '').toLocaleLowerCase('pt-BR');
-  const users = allUsers.filter((u) =>
-    `${u.name} ${u.username} ${u.department.name}`.toLocaleLowerCase('pt-BR').includes(query),
-  );
+  const { users, total, page } = await adminUsers(user.id, {
+    q: params.busca,
+    page: Number(params.pagina),
+  });
   return (
     <>
       <div className="page-heading">
@@ -38,7 +38,7 @@ export default async function UsersPage({
       <section className="panel list-panel">
         <div className="section-heading">
           <h2>
-            {users.length} {users.length === 1 ? 'pessoa' : 'pessoas'}
+            {total} {total === 1 ? 'pessoa' : 'pessoas'}
           </h2>
           <form className="search-form">
             <label className="sr-only" htmlFor="busca">
@@ -106,6 +106,12 @@ export default async function UsersPage({
           )}
         </div>
       </section>
+      <Pagination
+        path="/admin/usuarios"
+        params={{ busca: params.busca }}
+        page={page}
+        total={total}
+      />
     </>
   );
 }

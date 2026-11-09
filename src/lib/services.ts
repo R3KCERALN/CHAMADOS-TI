@@ -11,13 +11,34 @@ import type { Prisma, Role, Ticket } from '@/generated/prisma/client';
 type Tx = Prisma.TransactionClient;
 const techRoles: Role[] = ['TI', 'ADMIN'];
 export { actor } from './access';
-export async function adminUsers(actorId: string) {
+export async function adminUsers(
+  actorId: string,
+  { q = '', page = 1 }: { q?: string; page?: number } = {},
+) {
   const admin = await actor(db, actorId, ['ADMIN']);
-  return db.user.findMany({
-    where: { organizationId: admin.organizationId },
-    select: { ...publicUserSelect, createdAt: true, department: { select: { name: true } } },
-    orderBy: { name: 'asc' },
-  });
+  const term = q.trim().slice(0, 100);
+  const where: Prisma.UserWhereInput = {
+    organizationId: admin.organizationId,
+    ...(term && {
+      OR: [
+        { name: { contains: term, mode: 'insensitive' } },
+        { username: { contains: term, mode: 'insensitive' } },
+        { department: { name: { contains: term, mode: 'insensitive' } } },
+      ],
+    }),
+  };
+  const safePage = Math.max(1, Math.min(100000, Math.trunc(page) || 1));
+  const [users, total] = await Promise.all([
+    db.user.findMany({
+      where,
+      select: { ...publicUserSelect, createdAt: true, department: { select: { name: true } } },
+      orderBy: [{ name: 'asc' }, { id: 'asc' }],
+      take: 20,
+      skip: (safePage - 1) * 20,
+    }),
+    db.user.count({ where }),
+  ]);
+  return { users, total, page: safePage };
 }
 export async function createUser(actorId: string, input: unknown) {
   const data = userSchema.extend({ password: passwordSchema }).parse(input);

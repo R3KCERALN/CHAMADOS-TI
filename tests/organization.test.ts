@@ -435,7 +435,8 @@ test('isolamento impede ler/mutar chamados de outra Organization e atribuir refe
   );
 });
 test('isolamento cobre administração, filtros, analytics, equipe e exportação', async () => {
-  assert.ok(!(await services.adminUsers(admin)).some((u) => u.id === foreignAdmin));
+  const foreign = await db.user.findUniqueOrThrow({ where: { id: foreignAdmin } });
+  assert.equal((await services.adminUsers(admin, { q: foreign.username })).total, 0);
   await assert.rejects(services.resetPassword(admin, foreignAdmin, '654321'));
   await assert.rejects(
     saveCompany(admin, { id: foreignCompany, displayName: 'Ataque', cnpj: syntheticCnpj() }),

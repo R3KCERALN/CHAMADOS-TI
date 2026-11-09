@@ -405,3 +405,40 @@ test('trocas simultâneas de senha: só uma vence e a senha atual deixa de valer
   await login(user.username, winner);
   await assert.rejects(login(user.username, password), /inválidos/);
 });
+test('lista de usuários do admin é paginada e busca no servidor por nome, username e setor', async () => {
+  const marker = `Paginação ${randomBytes(4).toString('hex')}`;
+  const sector = await db.department.create({
+    data: { organizationId, name: `Setor ${randomBytes(4).toString('hex')}` },
+  });
+  const people = [];
+  for (let i = 0; i < 23; i++)
+    people.push(
+      await makeUser('FUNCIONARIO', {
+        name: `${marker} ${String(i).padStart(2, '0')}`,
+        ...(i === 7 && { departmentId: sector.id }),
+      }),
+    );
+  const first = await service.adminUsers(admin, { q: marker });
+  const second = await service.adminUsers(admin, { q: marker, page: 2 });
+  assert.equal(first.total, 23);
+  assert.equal(first.users.length, 20);
+  assert.equal(second.users.length, 3);
+  assert.deepEqual(
+    [...first.users, ...second.users].map((u) => u.name),
+    people.map((u) => u.name),
+  );
+  const byUsername = await service.adminUsers(admin, { q: people[3].username.toUpperCase() });
+  assert.deepEqual(
+    byUsername.users.map((u) => u.id),
+    [people[3].id],
+  );
+  const bySector = await service.adminUsers(admin, { q: sector.name.toLowerCase() });
+  assert.deepEqual(
+    bySector.users.map((u) => u.id),
+    [people[7].id],
+  );
+  assert.equal((await service.adminUsers(admin, { q: marker, page: 999 })).page, 999);
+  assert.equal((await service.adminUsers(admin, { q: `${marker} inexistente` })).total, 0);
+  assert.equal((await service.adminUsers(admin, { page: -4 })).page, 1);
+  await assert.rejects(service.adminUsers(employee, { q: marker }), /permissão/);
+});
