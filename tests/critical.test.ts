@@ -1,6 +1,7 @@
 import { before, after, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
+import argon2 from 'argon2';
 import { syntheticCnpj } from './fixtures';
 import { APP_ORGANIZATION_ID } from '../src/lib/config';
 import { db } from '../src/lib/db';
@@ -12,6 +13,7 @@ import {
   changePassword,
 } from '../src/lib/auth-service';
 import * as service from '../src/lib/services';
+import { AppError } from '../src/lib/errors';
 import type { Role } from '../src/generated/prisma/client';
 const password = process.env.TEST_PASSWORD!;
 let admin: string,
@@ -336,6 +338,17 @@ test('limite por conta e IP não bloqueia login correto de outro IP', async () =
   const session = await login(user.username, password, '192.0.2.2');
   assert.equal((await getSessionUser(session.token))?.id, user.id);
 });
+test('limite por conta e IP não é contornado trocando o host dentro da /64', async () => {
+  const user = await makeUser('FUNCIONARIO');
+  for (let i = 1; i <= 10; i++)
+    await assert.rejects(
+      login(user.username, 'SenhaIncorreta123', `2001:db8:1:2::${i}`),
+      /inválidos/,
+    );
+  await assert.rejects(login(user.username, password, '2001:db8:1:2:ffff::1'), /Muitas tentativas/);
+  const session = await login(user.username, password, '2001:db8:1:3::1');
+  assert.equal((await getSessionUser(session.token))?.id, user.id);
+});
 test('limite global bloqueia tentativas distribuídas entre IPs', async () => {
   const user = await makeUser('FUNCIONARIO');
   for (let i = 1; i <= 50; i++)
@@ -345,4 +358,187 @@ test('limite global bloqueia tentativas distribuídas entre IPs', async () => {
     /Muitas tentativas/,
   );
   await assert.rejects(login(user.username, password, '192.0.2.52'), /Muitas tentativas/);
+});
+
+const WRONG_PASSWORD = 'SenhaIncorreta123';
+test('troca de senha limita tentativas da senha atual sem alterar a senha', async () => {
+  const user = await makeUser('FUNCIONARIO');
+  for (let i = 0; i < 10; i++)
+    await assert.rejects(changePassword(user.id, WRONG_PASSWORD, 'NovaSenha123'), /incorreta/);
+  await assert.rejects(changePassword(user.id, password, 'NovaSenha123'), /Muitas tentativas/);
+  await login(user.username, password);
+  // Findo o prazo, a própria pessoa volta a conseguir trocar.
+  const key = createHash('sha256')
+    .update(`${APP_ORGANIZATION_ID}:change-password:${user.id}`)
+    .digest('hex');
+  await db.loginThrottle.update({ where: { key }, data: { expiresAt: new Date(0) } });
+  await changePassword(user.id, password, 'NovaSenha123');
+  await login(user.username, 'NovaSenha123');
+});
+test('senha atual errada não calcula hash da senha nova', async (t) => {
+  const user = await makeUser('FUNCIONARIO');
+  const hashSpy = t.mock.method(argon2, 'hash');
+  await assert.rejects(changePassword(user.id, WRONG_PASSWORD, 'NovaSenha123'), /incorreta/);
+  assert.equal(hashSpy.mock.callCount(), 0);
+});
+test('senha nova inválida não consome tentativas da troca de senha', async () => {
+  const user = await makeUser('FUNCIONARIO');
+  for (let i = 0; i < 11; i++) await assert.rejects(changePassword(user.id, password, '12345'));
+  await changePassword(user.id, password, 'NovaSenha123');
+  await login(user.username, 'NovaSenha123');
+});
+test('troca de senha bem-sucedida zera o contador de tentativas', async () => {
+  const user = await makeUser('FUNCIONARIO');
+  for (let i = 0; i < 5; i++)
+    await assert.rejects(changePassword(user.id, WRONG_PASSWORD, 'NovaSenha123'), /incorreta/);
+  await changePassword(user.id, password, 'NovaSenha123');
+  for (let i = 0; i < 10; i++)
+    await assert.rejects(changePassword(user.id, WRONG_PASSWORD, 'OutraSenha123'), /incorreta/);
+});
+test('trocas simultâneas de senha: só uma vence e a senha atual deixa de valer', async () => {
+  const user = await makeUser('FUNCIONARIO');
+  const results = await Promise.allSettled([
+    changePassword(user.id, password, 'NovaSenhaUm123'),
+    changePassword(user.id, password, 'NovaSenhaDois123'),
+  ]);
+  assert.equal(results.filter((r) => r.status === 'fulfilled').length, 1);
+  const winner = results[0].status === 'fulfilled' ? 'NovaSenhaUm123' : 'NovaSenhaDois123';
+  await login(user.username, winner);
+  await assert.rejects(login(user.username, password), /inválidos/);
+});
+test('lista de usuários do admin é paginada e busca no servidor por nome, username e setor', async () => {
+  const marker = `Paginação ${randomBytes(4).toString('hex')}`;
+  const sector = await db.department.create({
+    data: { organizationId, name: `Setor ${randomBytes(4).toString('hex')}` },
+  });
+  const people = [];
+  for (let i = 0; i < 23; i++)
+    people.push(
+      await makeUser('FUNCIONARIO', {
+        name: `${marker} ${String(i).padStart(2, '0')}`,
+        ...(i === 7 && { departmentId: sector.id }),
+      }),
+    );
+  const first = await service.adminUsers(admin, { q: marker });
+  const second = await service.adminUsers(admin, { q: marker, page: 2 });
+  assert.equal(first.total, 23);
+  assert.equal(first.users.length, 20);
+  assert.equal(second.users.length, 3);
+  assert.deepEqual(
+    [...first.users, ...second.users].map((u) => u.name),
+    people.map((u) => u.name),
+  );
+  const byUsername = await service.adminUsers(admin, { q: people[3].username.toUpperCase() });
+  assert.deepEqual(
+    byUsername.users.map((u) => u.id),
+    [people[3].id],
+  );
+  const bySector = await service.adminUsers(admin, { q: sector.name.toLowerCase() });
+  assert.deepEqual(
+    bySector.users.map((u) => u.id),
+    [people[7].id],
+  );
+  assert.equal((await service.adminUsers(admin, { q: marker, page: 999 })).page, 999);
+  assert.equal((await service.adminUsers(admin, { q: `${marker} inexistente` })).total, 0);
+  assert.equal((await service.adminUsers(admin, { page: -4 })).page, 1);
+  await assert.rejects(service.adminUsers(employee, { q: marker }), /permissão/);
+});
+
+// Races run several rounds: one round can serialize by chance and hide a missing lock.
+const RACE_ROUNDS = 6;
+test('dois ADMINs desativando um ao outro ao mesmo tempo deixam um ADMIN ativo', async () => {
+  for (let round = 0; round < RACE_ROUNDS; round++) {
+    const org = await db.organization.create({ data: { name: `Org corrida ${round}` } });
+    const sector = await db.department.create({
+      data: { organizationId: org.id, name: 'Setor da corrida' },
+    });
+    const [a, b] = await Promise.all(
+      [0, 1].map(() =>
+        makeUser('ADMIN', {
+          organizationId: org.id,
+          departmentId: sector.id,
+          primaryCompanyId: null,
+        }),
+      ),
+    );
+    const deactivate = (by: typeof a, target: typeof a) =>
+      service.updateUser(by.id, target.id, {
+        name: target.name,
+        username: target.username,
+        departmentId: sector.id,
+        role: 'ADMIN',
+        active: false,
+      });
+    const results = await Promise.allSettled([deactivate(a, b), deactivate(b, a)]);
+    assert.equal(results.filter((r) => r.status === 'fulfilled').length, 1, `rodada ${round}`);
+    // The loser must be serialized and refused by the app, not aborted by a database deadlock.
+    const refused = results.find((r) => r.status === 'rejected')!;
+    assert.ok(refused.reason instanceof AppError, `rodada ${round}: ${refused.reason}`);
+    assert.equal(
+      await db.user.count({ where: { organizationId: org.id, role: 'ADMIN', active: true } }),
+      1,
+      `rodada ${round}`,
+    );
+  }
+});
+const eventTypes = async (ticketId: string) =>
+  (await db.ticketEvent.findMany({ where: { ticketId }, orderBy: { sequence: 'asc' } })).map(
+    (e) => e.type,
+  );
+test('resolver e transferir ao mesmo tempo: só uma ação vale e o histórico bate com o estado', async () => {
+  for (let round = 0; round < RACE_ROUNDS; round++) {
+    const ticket = await newTicket();
+    await service.claimTicket(tech, ticket.id);
+    const results = await Promise.allSettled([
+      service.changeStatus(tech, ticket.id, { status: 'RESOLVIDO' }),
+      service.assignTicket(admin, ticket.id, tech2),
+    ]);
+    assert.equal(results.filter((r) => r.status === 'fulfilled').length, 1, `rodada ${round}`);
+    const final = await db.ticket.findUniqueOrThrow({ where: { id: ticket.id } });
+    const types = await eventTypes(ticket.id);
+    if (results[0].status === 'fulfilled') {
+      assert.equal(final.status, 'RESOLVIDO');
+      assert.equal(final.assigneeId, tech);
+      assert.deepEqual(types, ['CRIADO', 'ASSUMIDO', 'RESOLVIDO']);
+    } else {
+      assert.equal(final.status, 'EM_ATENDIMENTO');
+      assert.equal(final.assigneeId, tech2);
+      assert.equal(final.resolvedAt, null);
+      assert.deepEqual(types, ['CRIADO', 'ASSUMIDO', 'RESPONSAVEL_ALTERADO']);
+    }
+  }
+});
+test('resolver e adicionar apoio ao mesmo tempo não deixa apoio em chamado resolvido', async () => {
+  for (let round = 0; round < RACE_ROUNDS; round++) {
+    const ticket = await newTicket();
+    await service.claimTicket(tech, ticket.id);
+    const results = await Promise.allSettled([
+      service.changeStatus(tech, ticket.id, { status: 'RESOLVIDO' }),
+      service.setSupport(tech, ticket.id, tech2, true),
+    ]);
+    const final = await db.ticket.findUniqueOrThrow({
+      where: { id: ticket.id },
+      include: { participants: true },
+    });
+    assert.equal(results[0].status, 'fulfilled', `rodada ${round}`);
+    assert.equal(final.status, 'RESOLVIDO');
+    const types = await eventTypes(ticket.id);
+    if (results[1].status === 'fulfilled') {
+      // Apoio entrou antes da resolução: fica registrado na ordem certa.
+      assert.equal(final.participants.length, 1);
+      assert.deepEqual(types, ['CRIADO', 'ASSUMIDO', 'APOIO_ADICIONADO', 'RESOLVIDO']);
+    } else {
+      assert.equal(final.participants.length, 0);
+      assert.deepEqual(types, ['CRIADO', 'ASSUMIDO', 'RESOLVIDO']);
+    }
+  }
+});
+test('redefinição de senha pelo ADMIN libera a troca de senha bloqueada', async () => {
+  const user = await makeUser('FUNCIONARIO');
+  for (let i = 0; i < 10; i++)
+    await assert.rejects(changePassword(user.id, WRONG_PASSWORD, 'NovaSenha123'), /incorreta/);
+  await assert.rejects(changePassword(user.id, password, 'NovaSenha123'), /Muitas tentativas/);
+  await service.resetPassword(admin, user.id, 'Temporaria123');
+  await changePassword(user.id, 'Temporaria123', 'NovaSenha123');
+  assert.equal((await login(user.username, 'NovaSenha123')).mustChangePassword, false);
 });

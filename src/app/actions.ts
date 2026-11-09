@@ -7,7 +7,7 @@ import { Prisma } from '@/generated/prisma/client';
 import { AppError } from '@/lib/errors';
 import { limitLoginAddress } from '@/lib/login-ip-throttle';
 import { ticketReturnTo } from '@/lib/return-to';
-import { requireUser, SESSION_COOKIE } from '@/lib/auth';
+import { requireActionUser, SESSION_COOKIE } from '@/lib/auth';
 import { login, logout, changePassword } from '@/lib/auth-service';
 import * as service from '@/lib/services';
 import { saveCompany, saveUnit } from '@/lib/organization-service';
@@ -92,7 +92,7 @@ export async function logoutAction() {
 export async function passwordAction(_: FormState, form: FormData): Promise<FormState> {
   try {
     await sameOrigin();
-    const user = await requireUser(undefined, true);
+    const user = await requireActionUser(undefined, true);
     if (value(form, 'password') !== value(form, 'confirmation'))
       throw new AppError('A confirmação não corresponde à nova senha.');
     await changePassword(user.id, value(form, 'currentPassword'), value(form, 'password'));
@@ -121,7 +121,7 @@ function userFields(form: FormData) {
 export async function createUserAction(_: FormState, form: FormData): Promise<FormState> {
   try {
     await sameOrigin();
-    const user = await requireUser(['ADMIN']);
+    const user = await requireActionUser(['ADMIN']);
     await service.createUser(user.id, { ...userFields(form), password: value(form, 'password') });
     revalidatePath('/admin/usuarios');
   } catch (error) {
@@ -132,7 +132,7 @@ export async function createUserAction(_: FormState, form: FormData): Promise<Fo
 export async function updateUserAction(_: FormState, form: FormData): Promise<FormState> {
   try {
     await sameOrigin();
-    const user = await requireUser(['ADMIN']);
+    const user = await requireActionUser(['ADMIN']);
     await service.updateUser(user.id, value(form, 'id'), {
       ...userFields(form),
       active: value(form, 'active') === 'true',
@@ -146,7 +146,7 @@ export async function updateUserAction(_: FormState, form: FormData): Promise<Fo
 export async function resetPasswordAction(_: FormState, form: FormData): Promise<FormState> {
   try {
     await sameOrigin();
-    const user = await requireUser(['ADMIN']);
+    const user = await requireActionUser(['ADMIN']);
     await service.resetPassword(user.id, value(form, 'id'), value(form, 'password'));
     return { success: 'Senha temporária definida. A troca será obrigatória no próximo login.' };
   } catch (error) {
@@ -157,7 +157,7 @@ export async function createTicketAction(_: FormState, form: FormData): Promise<
   let id = '';
   try {
     await sameOrigin();
-    const user = await requireUser(['ADMIN', 'TI', 'FUNCIONARIO']);
+    const user = await requireActionUser(['ADMIN', 'TI', 'FUNCIONARIO']);
     const ticket = await service.createTicket(
       user.id,
       {
@@ -180,7 +180,7 @@ export async function createTicketAction(_: FormState, form: FormData): Promise<
 export async function ticketAction(_: FormState, form: FormData): Promise<FormState> {
   try {
     await sameOrigin();
-    const user = await requireUser();
+    const user = await requireActionUser();
     const id = value(form, 'ticketId');
     switch (value(form, 'intent')) {
       case 'location':
@@ -229,7 +229,7 @@ export async function ticketAction(_: FormState, form: FormData): Promise<FormSt
 export async function categoryAction(_: FormState, form: FormData): Promise<FormState> {
   try {
     await sameOrigin();
-    const user = await requireUser(['ADMIN']);
+    const user = await requireActionUser(['ADMIN']);
     await service.saveCategory(user.id, {
       id: value(form, 'id') || undefined,
       name: value(form, 'name'),
@@ -245,7 +245,7 @@ export async function categoryAction(_: FormState, form: FormData): Promise<Form
 export async function companyAction(_: FormState, form: FormData): Promise<FormState> {
   try {
     await sameOrigin();
-    const user = await requireUser(['ADMIN']);
+    const user = await requireActionUser(['ADMIN']);
     await saveCompany(user.id, {
       id: value(form, 'id') || undefined,
       displayName: value(form, 'displayName'),
@@ -262,7 +262,7 @@ export async function companyAction(_: FormState, form: FormData): Promise<FormS
 export async function unitAction(_: FormState, form: FormData): Promise<FormState> {
   try {
     await sameOrigin();
-    const user = await requireUser(['ADMIN']);
+    const user = await requireActionUser(['ADMIN']);
     await saveUnit(user.id, {
       id: value(form, 'id') || undefined,
       companyId: value(form, 'companyId'),

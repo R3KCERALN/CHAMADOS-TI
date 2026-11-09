@@ -4,6 +4,8 @@ import Link from 'next/link';
 import { Plus } from 'lucide-react';
 import { requireUser } from '@/lib/auth';
 import { listTickets } from '@/lib/services';
+import { resetInvalidFilters } from '@/lib/invalid-filters';
+import { InvalidFilterNotice } from '@/components/invalid-filter-notice';
 import { TicketList } from '@/components/tickets';
 import { Pagination } from '@/components/pagination';
 import { redirect } from 'next/navigation';
@@ -44,7 +46,7 @@ export default async function TicketsPage({
     filter,
     Number(params.pagina || 1),
     fields,
-  );
+  ).catch((error) => resetInvalidFilters(error, params, '/chamados'));
   const options = employee
     ? null
     : await Promise.all([
@@ -81,6 +83,7 @@ export default async function TicketsPage({
           {employee ? 'Abrir chamado' : 'Atendimento rápido'}
         </Link>
       </div>
+      <InvalidFilterNotice aviso={params.aviso} />
       {!employee && (
         <>
           <nav className="tabs" aria-label="Filtrar chamados">
@@ -190,7 +193,9 @@ export default async function TicketsPage({
           <h2>
             {total} {total === 1 ? 'chamado' : 'chamados'}
           </h2>
-          <span className="muted small">Mais recentes primeiro</span>
+          <span className="muted small">
+            {!employee && filter === 'novos' ? 'Mais antigos primeiro' : 'Mais recentes primeiro'}
+          </span>
         </div>
         <TicketList tickets={tickets} employee={employee} />
       </section>

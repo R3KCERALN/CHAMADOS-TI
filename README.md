@@ -23,7 +23,7 @@ npm run db:seed
 npm run dev
 ```
 
-Abra **http://localhost:3000**.
+Abra **http://localhost:3000**. `dev` e `start` escutam só em 127.0.0.1; para expor na rede local (por exemplo, testar no celular), use `HOST=0.0.0.0 npm run dev`. O login em HTTP fora do localhost não funciona, pois `COOKIE_SECURE=false` só é aceito em localhost.
 
 `setup:env` cria `.env` com senhas aleatórias para PostgreSQL e ADMIN, permissão de arquivo 0600 e não sobrescreve configuração existente. Para configuração manual, copie `.env.example` para `.env`, substitua os placeholders e mantenha POSTGRES_PASSWORD e DATABASE_URL consistentes. Caracteres especiais na senha dentro da URL precisam de URL encoding.
 
@@ -159,7 +159,7 @@ FKs restritivas protegem o histórico. Índices cobrem fila, solicitante, respon
 - Sem operações destrutivas via GET, sem signup, sem exclusão de histórico e sem stack traces nas mensagens ao usuário.
 - Cabeçalhos contra iframe/sniffing; CSP por requisição com nonce e `strict-dynamic` via `src/proxy.ts`, sem `unsafe-inline` em scripts (estilos inline ainda permitidos) e `worker-src 'self'`.
   `/sw.js` recebe CSP mínima estática.
-- Não registrar segredos nem cachear dados privados. Login: em produção, 10 tentativas/15 min por conta+IP, 50 tentativas/15 min por conta (todos os IPs) e 100 tentativas/15 min por IP recebido exclusivamente do Caddy (IPs corporativos compartilhados); fora de produção, 10 tentativas/15 min por conta.
+- Não registrar segredos nem cachear dados privados. Login: em produção, 10 tentativas/15 min por conta+IP, 50 tentativas/15 min por conta (todos os IPs) e 100 tentativas/15 min por IP recebido exclusivamente do Caddy (IPs corporativos compartilhados), com IPv6 agrupado por /64 nos limites por IP; fora de produção, 10 tentativas/15 min por conta. Troca de senha: 10 tentativas/15 min por usuário, zeradas ao concluir; a senha atual é conferida antes de calcular o hash da nova.
   Risco residual aceito: ~5 IPs ou IPv6 rotativo ainda podem bloquear temporariamente uma conta; força bruta distribuída limitada a 50 tentativas/15 min por conta. Monitorar 429 recorrentes e preferir senhas além de PINs numéricos para ADMIN. Proteção volumétrica depende da infraestrutura.
 
 ## Testes e verificações

@@ -30,7 +30,7 @@ docker compose --env-file .env.production -f compose.production.yaml run --rm mi
 
 `APP_ENV=production`, cookies Secure e worker ativo são fixados pelo Compose. O startup rejeita URL não HTTPS, origem divergente, configurações ausentes, timezone inválido, banco demo/teste e VAPID incompleto/incompatível. Os builds locais continuam usando `.env`/HTTP localhost sem selecionar `APP_ENV=production`.
 
-Nunca executar `demo:setup`, seed fictício, migrate reset ou `down -v` nesta instalação. Não copiar `.env`/`.env.demo` para produção. Alterar senhas no arquivo não muda automaticamente a senha do dono de um volume PostgreSQL já inicializado; faça rotação coordenada no banco. A senha do papel da aplicação é reaplicada pela operação de migrations.
+Nunca executar `demo:setup`, seed fictício, migrate reset ou `down -v` nesta instalação. Não copiar `.env`/`.env.demo` para produção. Alterar senhas no arquivo não muda automaticamente a senha do dono de um volume PostgreSQL já inicializado; faça rotação coordenada no banco. A senha do papel da aplicação é reaplicada pela operação de migrations, junto com os grants: o papel não acessa `_prisma_migrations` e só insere/lê `TicketEvent`, `UserAudit` e `TicketComment` (sem UPDATE/DELETE/TRUNCATE), mantendo o histórico somente de acréscimo.
 
 ## Atualização e rollback
 
@@ -148,7 +148,7 @@ Valide contagens/histórico e versão das migrations no banco novo antes de prom
 
 ## Segurança e limites
 
-Autorização/isolamento por Organization, Argon2id, sessão de 8h, CSRF/Origin e política intencional de senha de 6–128 caracteres são preservados. Login mantém 10 tentativas por conta/15 min e em produção acrescenta 100 tentativas/IP/15 min, persistidas como hash. Caddy sobrescreve X-Client-IP; app nunca deve ter porta pública. Limite por IP considera NAT corporativo e não substitui proteção contra ataque volumétrico. HTTPS/HSTS (sem preload/subdomínios), CSP, anti-iframe e nosniff permanecem; CSP ainda permite inline requerido pela configuração Next atual.
+Autorização/isolamento por Organization, Argon2id, sessão de 8h, CSRF/Origin e política intencional de senha de 6–128 caracteres são preservados. Login mantém 10 tentativas por conta/15 min e em produção acrescenta 100 tentativas/IP/15 min, persistidas como hash; nos limites por IP, IPv6 conta por /64 e IPv4 mapeado (`::ffff:`) conta como o IPv4 de origem. Caddy sobrescreve X-Client-IP e responde 404 a `/_next/image` (o app não usa `next/image`); app nunca deve ter porta pública. Limite por IP considera NAT corporativo e não substitui proteção contra ataque volumétrico. HTTPS/HSTS (sem preload/subdomínios), CSP, anti-iframe e nosniff permanecem; CSP ainda permite inline requerido pela configuração Next atual.
 
 Worker Web Push continua no Node persistente, pós-commit com outbox, retries e revalidação de permissões. O servidor precisa de saída HTTPS aos endpoints permitidos dos navegadores. Não mudar VAPID ao atualizar; não habilitar cache de páginas privadas no proxy/SW. Entrega real em iOS/PWA, certificado público, DNS, firewall, capacidade e recuperação após reboot da VPS precisam de validação no destino. A validação local HTTPS usa certificado interno, sem contratar serviços nem instalar confiança global na máquina.
 

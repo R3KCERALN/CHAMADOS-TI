@@ -5,19 +5,40 @@ import { db } from './db';
 import { actor } from './access';
 import { resolveLocation, validateUserLocations } from './organization-service';
 import { AppError } from './errors';
-import { hashPassword, publicUserSelect } from './auth-service';
+import { hashPassword, passwordChangeThrottleKey, publicUserSelect } from './auth-service';
 import { userSchema, ticketSchema, statusSchema, passwordSchema } from './validation';
 import type { Prisma, Role, Ticket } from '@/generated/prisma/client';
 type Tx = Prisma.TransactionClient;
 const techRoles: Role[] = ['TI', 'ADMIN'];
 export { actor } from './access';
-export async function adminUsers(actorId: string) {
+export async function adminUsers(
+  actorId: string,
+  { q = '', page = 1 }: { q?: string; page?: number } = {},
+) {
   const admin = await actor(db, actorId, ['ADMIN']);
-  return db.user.findMany({
-    where: { organizationId: admin.organizationId },
-    select: { ...publicUserSelect, createdAt: true, department: { select: { name: true } } },
-    orderBy: { name: 'asc' },
-  });
+  const term = q.trim().slice(0, 100);
+  const where: Prisma.UserWhereInput = {
+    organizationId: admin.organizationId,
+    ...(term && {
+      OR: [
+        { name: { contains: term, mode: 'insensitive' } },
+        { username: { contains: term, mode: 'insensitive' } },
+        { department: { name: { contains: term, mode: 'insensitive' } } },
+      ],
+    }),
+  };
+  const safePage = Math.max(1, Math.min(100000, Math.trunc(page) || 1));
+  const [users, total] = await Promise.all([
+    db.user.findMany({
+      where,
+      select: { ...publicUserSelect, createdAt: true, department: { select: { name: true } } },
+      orderBy: [{ name: 'asc' }, { id: 'asc' }],
+      take: 20,
+      skip: (safePage - 1) * 20,
+    }),
+    db.user.count({ where }),
+  ]);
+  return { users, total, page: safePage };
 }
 export async function createUser(actorId: string, input: unknown) {
   const data = userSchema.extend({ password: passwordSchema }).parse(input);
@@ -161,6 +182,8 @@ export async function resetPassword(actorId: string, userId: string, password: s
     await tx.session.deleteMany({ where: { userId } });
     await tx.pushSubscription.updateMany({ where: { userId }, data: { active: false } });
     await tx.userAudit.create({ data: { actorId, subjectId: userId, action: 'SENHA_REDEFINIDA' } });
+    // A fresh temporary password must not stay blocked by earlier failed change attempts.
+    await tx.loginThrottle.deleteMany({ where: { key: passwordChangeThrottleKey(userId) } });
   });
 }
 export async function createTicket(actorId: string, input: unknown, requesterId?: string) {
@@ -368,7 +391,11 @@ export async function listTickets(
         category: { select: { name: true } },
         assignee: { select: { name: true } },
       },
-      orderBy: { createdAt: 'desc' },
+      // Triage queue: the oldest NOVO first; ties and every other list stay stable by id.
+      orderBy:
+        user.role !== 'FUNCIONARIO' && filter === 'novos'
+          ? [{ createdAt: 'asc' }, { id: 'asc' }]
+          : [{ createdAt: 'desc' }, { id: 'desc' }],
       take: 20,
       skip: (safePage - 1) * 20,
     }),
