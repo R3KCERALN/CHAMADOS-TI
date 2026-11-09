@@ -30,7 +30,7 @@ docker compose --env-file .env.production -f compose.production.yaml run --rm mi
 
 `APP_ENV=production`, cookies Secure e worker ativo são fixados pelo Compose. O startup rejeita URL não HTTPS, origem divergente, configurações ausentes, timezone inválido, banco demo/teste e VAPID incompleto/incompatível. Os builds locais continuam usando `.env`/HTTP localhost sem selecionar `APP_ENV=production`.
 
-Nunca executar `demo:setup`, seed fictício, migrate reset ou `down -v` nesta instalação. Não copiar `.env`/`.env.demo` para produção. Alterar senhas no arquivo não muda automaticamente a senha do dono de um volume PostgreSQL já inicializado; faça rotação coordenada no banco. A senha do papel da aplicação é reaplicada pela operação de migrations.
+Nunca executar `demo:setup`, seed fictício, migrate reset ou `down -v` nesta instalação. Não copiar `.env`/`.env.demo` para produção. Alterar senhas no arquivo não muda automaticamente a senha do dono de um volume PostgreSQL já inicializado; faça rotação coordenada no banco. A senha do papel da aplicação é reaplicada pela operação de migrations, junto com os grants: o papel não acessa `_prisma_migrations` e só insere/lê `TicketEvent`, `UserAudit` e `TicketComment` (sem UPDATE/DELETE/TRUNCATE), mantendo o histórico somente de acréscimo.
 
 ## Atualização e rollback
 

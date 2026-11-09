@@ -60,6 +60,10 @@ try {
   );
   // Migration bookkeeping is never writable by the web process.
   await client.query(`REVOKE ALL ON TABLE "_prisma_migrations" FROM ${quoted.role}`);
+  // Audit history is append-only for the web process: it only inserts and reads these rows.
+  await client.query(
+    `REVOKE UPDATE, DELETE, TRUNCATE ON TABLE "TicketEvent", "UserAudit", "TicketComment" FROM ${quoted.role}`,
+  );
   await client.query('COMMIT');
   console.log(`database_${mode}_complete`);
 } catch {
