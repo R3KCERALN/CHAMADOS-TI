@@ -23,7 +23,7 @@ npm run db:seed
 npm run dev
 ```
 
-Abra **http://localhost:3000**.
+Abra **http://localhost:3000**. `dev` e `start` escutam só em 127.0.0.1; para expor na rede local (por exemplo, testar no celular), use `HOST=0.0.0.0 npm run dev`. O login em HTTP fora do localhost não funciona, pois `COOKIE_SECURE=false` só é aceito em localhost.
 
 `setup:env` cria `.env` com senhas aleatórias para PostgreSQL e ADMIN, permissão de arquivo 0600 e não sobrescreve configuração existente. Para configuração manual, copie `.env.example` para `.env`, substitua os placeholders e mantenha POSTGRES_PASSWORD e DATABASE_URL consistentes. Caracteres especiais na senha dentro da URL precisam de URL encoding.
 
