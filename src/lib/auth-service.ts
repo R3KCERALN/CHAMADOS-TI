@@ -3,6 +3,7 @@ import argon2 from 'argon2';
 import { db } from './db';
 import { APP_ORGANIZATION_ID } from './config';
 import { AppError } from './errors';
+import { loginThrottleAddress } from './login-ip-throttle';
 import { passwordSchema, usernameSchema } from './validation';
 export const publicUserSelect = {
   id: true,
@@ -25,6 +26,15 @@ export const hashPassword = (password: string) =>
     parallelism: 1,
   });
 const tokenHash = (token: string) => createHash('sha256').update(token).digest('hex');
+async function consumeAttempt(key: string, limit: number, expiresAt: Date) {
+  const throttle = await db.loginThrottle.upsert({
+    where: { key },
+    create: { key, expiresAt },
+    update: { attempts: { increment: 1 } },
+  });
+  if (throttle.attempts > limit)
+    throw new AppError('Muitas tentativas. Aguarde 15 minutos e tente novamente.', 429);
+}
 let dummyHash: Promise<string> | undefined;
 export async function login(username: string, password: string, address?: string | null) {
   const parsed = usernameSchema.safeParse(username);
@@ -33,22 +43,19 @@ export async function login(username: string, password: string, address?: string
   const accountKey = tokenHash(`${APP_ORGANIZATION_ID}:${parsed.data}`);
   const throttles = address
     ? [
-        { key: tokenHash(`${APP_ORGANIZATION_ID}:${parsed.data}:ip:${address}`), limit: 10 },
+        {
+          key: tokenHash(
+            `${APP_ORGANIZATION_ID}:${parsed.data}:ip:${loginThrottleAddress(address)}`,
+          ),
+          limit: 10,
+        },
         { key: accountKey, limit: 50 },
       ]
     : [{ key: accountKey, limit: 10 }];
   const now = new Date();
   await db.loginThrottle.deleteMany({ where: { expiresAt: { lt: now } } });
   const windowEnd = new Date(Date.now() + 15 * 60 * 1000);
-  for (const { key, limit } of throttles) {
-    const throttle = await db.loginThrottle.upsert({
-      where: { key },
-      create: { key, expiresAt: windowEnd },
-      update: { attempts: { increment: 1 } },
-    });
-    if (throttle.attempts > limit)
-      throw new AppError('Muitas tentativas. Aguarde 15 minutos e tente novamente.', 429);
-  }
+  for (const { key, limit } of throttles) await consumeAttempt(key, limit, windowEnd);
   const user = await db.user.findFirst({
     where: { username: parsed.data, organizationId: APP_ORGANIZATION_ID },
     include: { organization: true },
@@ -107,19 +114,27 @@ export async function logout(token: string | undefined) {
 export async function changePassword(userId: string, currentPassword: string, newPassword: string) {
   if (currentPassword === newPassword)
     throw new AppError('A nova senha deve ser diferente da senha atual.');
+  passwordSchema.parse(newPassword);
+  const throttleKey = tokenHash(`${APP_ORGANIZATION_ID}:change-password:${userId}`);
+  const now = new Date();
+  await db.loginThrottle.deleteMany({ where: { expiresAt: { lt: now } } });
+  await consumeAttempt(throttleKey, 10, new Date(now.getTime() + 15 * 60 * 1000));
+  const verified = await db.user.findUnique({ where: { id: userId } });
+  if (
+    !verified ||
+    currentPassword.length > 128 ||
+    !(await argon2.verify(verified.passwordHash, currentPassword))
+  )
+    throw new AppError('Senha atual incorreta.');
   const hash = await hashPassword(newPassword);
   await db.$transaction(async (tx) => {
+    // Argon2 runs outside the lock; re-check that the verified hash is still the current one.
     await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${userId} FOR UPDATE`;
     const user = await tx.user.findUnique({
       where: { id: userId },
       include: { organization: true },
     });
-    if (
-      !user?.active ||
-      !user.organization.active ||
-      currentPassword.length > 128 ||
-      !(await argon2.verify(user.passwordHash, currentPassword))
-    )
+    if (!user?.active || !user.organization.active || user.passwordHash !== verified.passwordHash)
       throw new AppError('Senha atual incorreta.');
     await tx.user.update({
       where: { id: userId },
@@ -130,5 +145,6 @@ export async function changePassword(userId: string, currentPassword: string, ne
     await tx.userAudit.create({
       data: { actorId: userId, subjectId: userId, action: 'SENHA_ALTERADA' },
     });
+    await tx.loginThrottle.deleteMany({ where: { key: throttleKey } });
   });
 }

@@ -51,3 +51,40 @@ test('production IP throttle is persistent and rejects forged or missing address
   await limitLoginAddress(address);
   await db.loginThrottle.delete({ where: { key } });
 });
+
+test('endereço do limite de login agrupa IPv6 por /64 e reconhece IPv4 mapeado', async () => {
+  const { loginThrottleAddress } = await import('../src/lib/login-ip-throttle');
+  for (const [address, expected] of [
+    ['192.0.2.1', '192.0.2.1'],
+    ['2001:db8:1:2:3:4:5:6', '2001:db8:1:2::/64'],
+    ['2001:DB8:1:2::1', '2001:db8:1:2::/64'],
+    ['2001:0db8:0001:0002::9', '2001:db8:1:2::/64'],
+    ['2001:db8:1:2::1%eth0', '2001:db8:1:2::/64'],
+    ['2001:db8:1:2:3:4:192.0.2.1', '2001:db8:1:2::/64'],
+    ['2001:db8:1:3::1', '2001:db8:1:3::/64'],
+    ['1::', '1:0:0:0::/64'],
+    ['::1', '0:0:0:0::/64'],
+    ['::ffff:192.0.2.1', '192.0.2.1'],
+    ['::ffff:c000:201', '192.0.2.1'],
+  ])
+    assert.equal(loginThrottleAddress(address), expected, address);
+});
+
+test('limite por IP conta a mesma /64 em conjunto e não mistura outras redes', async () => {
+  const { limitLoginAddress } = await import('../src/lib/login-ip-throttle');
+  const { db } = await import('../src/lib/db');
+  const { createHash } = await import('node:crypto');
+  const { APP_ORGANIZATION_ID } = await import('../src/lib/config');
+  const hashKey = (network: string) =>
+    createHash('sha256').update(`ip:${APP_ORGANIZATION_ID}:${network}`).digest('hex');
+  const key = hashKey('2001:db8:5:6::/64');
+  await db.loginThrottle.create({
+    data: { key, attempts: 99, expiresAt: new Date(Date.now() + 60000) },
+  });
+  await limitLoginAddress('2001:db8:5:6::1');
+  await assert.rejects(limitLoginAddress('2001:db8:5:6:ffff::2'), /Muitas tentativas/);
+  await limitLoginAddress('2001:db8:5:7::1');
+  await db.loginThrottle.deleteMany({
+    where: { key: { in: [key, hashKey('2001:db8:5:7::/64')] } },
+  });
+});

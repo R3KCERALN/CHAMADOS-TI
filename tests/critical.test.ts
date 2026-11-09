@@ -1,6 +1,7 @@
 import { before, after, test } from 'node:test';
 import assert from 'node:assert/strict';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
+import argon2 from 'argon2';
 import { syntheticCnpj } from './fixtures';
 import { APP_ORGANIZATION_ID } from '../src/lib/config';
 import { db } from '../src/lib/db';
@@ -336,6 +337,17 @@ test('limite por conta e IP não bloqueia login correto de outro IP', async () =
   const session = await login(user.username, password, '192.0.2.2');
   assert.equal((await getSessionUser(session.token))?.id, user.id);
 });
+test('limite por conta e IP não é contornado trocando o host dentro da /64', async () => {
+  const user = await makeUser('FUNCIONARIO');
+  for (let i = 1; i <= 10; i++)
+    await assert.rejects(
+      login(user.username, 'SenhaIncorreta123', `2001:db8:1:2::${i}`),
+      /inválidos/,
+    );
+  await assert.rejects(login(user.username, password, '2001:db8:1:2:ffff::1'), /Muitas tentativas/);
+  const session = await login(user.username, password, '2001:db8:1:3::1');
+  assert.equal((await getSessionUser(session.token))?.id, user.id);
+});
 test('limite global bloqueia tentativas distribuídas entre IPs', async () => {
   const user = await makeUser('FUNCIONARIO');
   for (let i = 1; i <= 50; i++)
@@ -345,4 +357,51 @@ test('limite global bloqueia tentativas distribuídas entre IPs', async () => {
     /Muitas tentativas/,
   );
   await assert.rejects(login(user.username, password, '192.0.2.52'), /Muitas tentativas/);
+});
+
+const WRONG_PASSWORD = 'SenhaIncorreta123';
+test('troca de senha limita tentativas da senha atual sem alterar a senha', async () => {
+  const user = await makeUser('FUNCIONARIO');
+  for (let i = 0; i < 10; i++)
+    await assert.rejects(changePassword(user.id, WRONG_PASSWORD, 'NovaSenha123'), /incorreta/);
+  await assert.rejects(changePassword(user.id, password, 'NovaSenha123'), /Muitas tentativas/);
+  await login(user.username, password);
+  // Findo o prazo, a própria pessoa volta a conseguir trocar.
+  const key = createHash('sha256')
+    .update(`${APP_ORGANIZATION_ID}:change-password:${user.id}`)
+    .digest('hex');
+  await db.loginThrottle.update({ where: { key }, data: { expiresAt: new Date(0) } });
+  await changePassword(user.id, password, 'NovaSenha123');
+  await login(user.username, 'NovaSenha123');
+});
+test('senha atual errada não calcula hash da senha nova', async (t) => {
+  const user = await makeUser('FUNCIONARIO');
+  const hashSpy = t.mock.method(argon2, 'hash');
+  await assert.rejects(changePassword(user.id, WRONG_PASSWORD, 'NovaSenha123'), /incorreta/);
+  assert.equal(hashSpy.mock.callCount(), 0);
+});
+test('senha nova inválida não consome tentativas da troca de senha', async () => {
+  const user = await makeUser('FUNCIONARIO');
+  for (let i = 0; i < 11; i++) await assert.rejects(changePassword(user.id, password, '12345'));
+  await changePassword(user.id, password, 'NovaSenha123');
+  await login(user.username, 'NovaSenha123');
+});
+test('troca de senha bem-sucedida zera o contador de tentativas', async () => {
+  const user = await makeUser('FUNCIONARIO');
+  for (let i = 0; i < 5; i++)
+    await assert.rejects(changePassword(user.id, WRONG_PASSWORD, 'NovaSenha123'), /incorreta/);
+  await changePassword(user.id, password, 'NovaSenha123');
+  for (let i = 0; i < 10; i++)
+    await assert.rejects(changePassword(user.id, WRONG_PASSWORD, 'OutraSenha123'), /incorreta/);
+});
+test('trocas simultâneas de senha: só uma vence e a senha atual deixa de valer', async () => {
+  const user = await makeUser('FUNCIONARIO');
+  const results = await Promise.allSettled([
+    changePassword(user.id, password, 'NovaSenhaUm123'),
+    changePassword(user.id, password, 'NovaSenhaDois123'),
+  ]);
+  assert.equal(results.filter((r) => r.status === 'fulfilled').length, 1);
+  const winner = results[0].status === 'fulfilled' ? 'NovaSenhaUm123' : 'NovaSenhaDois123';
+  await login(user.username, winner);
+  await assert.rejects(login(user.username, password), /inválidos/);
 });
