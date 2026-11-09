@@ -13,6 +13,7 @@ import {
   changePassword,
 } from '../src/lib/auth-service';
 import * as service from '../src/lib/services';
+import { AppError } from '../src/lib/errors';
 import type { Role } from '../src/generated/prisma/client';
 const password = process.env.TEST_PASSWORD!;
 let admin: string,
@@ -441,4 +442,94 @@ test('lista de usuários do admin é paginada e busca no servidor por nome, user
   assert.equal((await service.adminUsers(admin, { q: `${marker} inexistente` })).total, 0);
   assert.equal((await service.adminUsers(admin, { page: -4 })).page, 1);
   await assert.rejects(service.adminUsers(employee, { q: marker }), /permissão/);
+});
+
+// Races run several rounds: one round can serialize by chance and hide a missing lock.
+const RACE_ROUNDS = 6;
+test('dois ADMINs desativando um ao outro ao mesmo tempo deixam um ADMIN ativo', async () => {
+  for (let round = 0; round < RACE_ROUNDS; round++) {
+    const org = await db.organization.create({ data: { name: `Org corrida ${round}` } });
+    const sector = await db.department.create({
+      data: { organizationId: org.id, name: 'Setor da corrida' },
+    });
+    const [a, b] = await Promise.all(
+      [0, 1].map(() =>
+        makeUser('ADMIN', {
+          organizationId: org.id,
+          departmentId: sector.id,
+          primaryCompanyId: null,
+        }),
+      ),
+    );
+    const deactivate = (by: typeof a, target: typeof a) =>
+      service.updateUser(by.id, target.id, {
+        name: target.name,
+        username: target.username,
+        departmentId: sector.id,
+        role: 'ADMIN',
+        active: false,
+      });
+    const results = await Promise.allSettled([deactivate(a, b), deactivate(b, a)]);
+    assert.equal(results.filter((r) => r.status === 'fulfilled').length, 1, `rodada ${round}`);
+    // The loser must be serialized and refused by the app, not aborted by a database deadlock.
+    const refused = results.find((r) => r.status === 'rejected')!;
+    assert.ok(refused.reason instanceof AppError, `rodada ${round}: ${refused.reason}`);
+    assert.equal(
+      await db.user.count({ where: { organizationId: org.id, role: 'ADMIN', active: true } }),
+      1,
+      `rodada ${round}`,
+    );
+  }
+});
+const eventTypes = async (ticketId: string) =>
+  (await db.ticketEvent.findMany({ where: { ticketId }, orderBy: { sequence: 'asc' } })).map(
+    (e) => e.type,
+  );
+test('resolver e transferir ao mesmo tempo: só uma ação vale e o histórico bate com o estado', async () => {
+  for (let round = 0; round < RACE_ROUNDS; round++) {
+    const ticket = await newTicket();
+    await service.claimTicket(tech, ticket.id);
+    const results = await Promise.allSettled([
+      service.changeStatus(tech, ticket.id, { status: 'RESOLVIDO' }),
+      service.assignTicket(admin, ticket.id, tech2),
+    ]);
+    assert.equal(results.filter((r) => r.status === 'fulfilled').length, 1, `rodada ${round}`);
+    const final = await db.ticket.findUniqueOrThrow({ where: { id: ticket.id } });
+    const types = await eventTypes(ticket.id);
+    if (results[0].status === 'fulfilled') {
+      assert.equal(final.status, 'RESOLVIDO');
+      assert.equal(final.assigneeId, tech);
+      assert.deepEqual(types, ['CRIADO', 'ASSUMIDO', 'RESOLVIDO']);
+    } else {
+      assert.equal(final.status, 'EM_ATENDIMENTO');
+      assert.equal(final.assigneeId, tech2);
+      assert.equal(final.resolvedAt, null);
+      assert.deepEqual(types, ['CRIADO', 'ASSUMIDO', 'RESPONSAVEL_ALTERADO']);
+    }
+  }
+});
+test('resolver e adicionar apoio ao mesmo tempo não deixa apoio em chamado resolvido', async () => {
+  for (let round = 0; round < RACE_ROUNDS; round++) {
+    const ticket = await newTicket();
+    await service.claimTicket(tech, ticket.id);
+    const results = await Promise.allSettled([
+      service.changeStatus(tech, ticket.id, { status: 'RESOLVIDO' }),
+      service.setSupport(tech, ticket.id, tech2, true),
+    ]);
+    const final = await db.ticket.findUniqueOrThrow({
+      where: { id: ticket.id },
+      include: { participants: true },
+    });
+    assert.equal(results[0].status, 'fulfilled', `rodada ${round}`);
+    assert.equal(final.status, 'RESOLVIDO');
+    const types = await eventTypes(ticket.id);
+    if (results[1].status === 'fulfilled') {
+      // Apoio entrou antes da resolução: fica registrado na ordem certa.
+      assert.equal(final.participants.length, 1);
+      assert.deepEqual(types, ['CRIADO', 'ASSUMIDO', 'APOIO_ADICIONADO', 'RESOLVIDO']);
+    } else {
+      assert.equal(final.participants.length, 0);
+      assert.deepEqual(types, ['CRIADO', 'ASSUMIDO', 'RESOLVIDO']);
+    }
+  }
 });
