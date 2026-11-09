@@ -1,7 +1,7 @@
 import { LiveUpdates } from '@/components/live-updates';
 import { operationalRevision } from '@/lib/live-updates';
 import Link from 'next/link';
-import { notFound } from 'next/navigation';
+import { notFound, redirect } from 'next/navigation';
 import {
   ArrowLeft,
   Clock3,
@@ -48,6 +48,7 @@ export default async function TicketPage({
   searchParams: Promise<{ criado?: string; eventos?: string; comentarios?: string }>;
 }) {
   const user = await requireUser();
+  if (user.role === 'GESTOR') redirect('/gestor');
   const revision = await operationalRevision(user.id);
   const { id } = await params;
   const search = await searchParams;

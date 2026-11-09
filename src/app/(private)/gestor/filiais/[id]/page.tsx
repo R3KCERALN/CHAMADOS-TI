@@ -9,6 +9,7 @@ import { Bars } from '@/components/management/charts';
 import { organizationLabels as labels } from '@/lib/organization-labels';
 import { complexityLabels } from '@/lib/labels';
 import { queryString, type SearchParams } from '@/lib/period';
+import { resetInvalidFilters } from '@/lib/invalid-filters';
 export default async function CompanyDetail({
   params,
   searchParams,
@@ -27,8 +28,12 @@ export default async function CompanyDetail({
           include: { units: true },
         });
   if (id !== 'none' && !company) notFound();
-  const search = { ...(await searchParams), company: id };
-  const [data, options] = await Promise.all([overview(user.id, search), analyticsOptions(user.id)]);
+  const query = await searchParams;
+  const search = { ...query, company: id };
+  const [data, options] = await Promise.all([
+    overview(user.id, search),
+    analyticsOptions(user.id),
+  ]).catch((error) => resetInvalidFilters(error, query, `/gestor/filiais/${id}`));
   const values = Object.fromEntries(
     Object.entries(search).filter((e): e is [string, string] => typeof e[1] === 'string'),
   );

@@ -3,6 +3,7 @@ import { organizationLabels as labels } from '@/lib/organization-labels';
 import { notFound } from 'next/navigation';
 import { requireUser } from '@/lib/auth';
 import { analyticsOptions, overview, describeFilters } from '@/lib/analytics-service';
+import { resetInvalidFilters } from '@/lib/invalid-filters';
 import { type SearchParams, queryString } from '@/lib/period';
 import { ManagementFilters } from '@/components/management/filters';
 import { MetricCard, TimeCard } from '@/components/management/summary';
@@ -17,7 +18,10 @@ export default async function ManagementPage({
   const user = await requireUser();
   if (!['GESTOR', 'ADMIN'].includes(user.role)) notFound();
   const params = await searchParams;
-  const [data, options] = await Promise.all([overview(user.id, params), analyticsOptions(user.id)]);
+  const [data, options] = await Promise.all([
+    overview(user.id, params),
+    analyticsOptions(user.id),
+  ]).catch((error) => resetInvalidFilters(error, params, '/gestor'));
   const values = Object.fromEntries(
     Object.entries(params).filter((e): e is [string, string] => typeof e[1] === 'string'),
   );
