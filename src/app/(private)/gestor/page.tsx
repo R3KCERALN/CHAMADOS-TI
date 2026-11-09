@@ -4,6 +4,7 @@ import { notFound } from 'next/navigation';
 import { requireUser } from '@/lib/auth';
 import { analyticsOptions, overview, describeFilters } from '@/lib/analytics-service';
 import { resetInvalidFilters } from '@/lib/invalid-filters';
+import { InvalidFilterNotice } from '@/components/invalid-filter-notice';
 import { type SearchParams, queryString } from '@/lib/period';
 import { ManagementFilters } from '@/components/management/filters';
 import { MetricCard, TimeCard } from '@/components/management/summary';
@@ -86,6 +87,7 @@ export default async function ManagementPage({
         <a href="#demanda">Demanda</a>
         <a href="#backlog">Backlog</a>
       </nav>
+      <InvalidFilterNotice aviso={params.aviso} />
       <ManagementFilters options={options} values={values} />
       <div className="active-filter-summary" aria-label="Filtros ativos">
         <strong>Filtros ativos</strong>

@@ -533,3 +533,12 @@ test('resolver e adicionar apoio ao mesmo tempo não deixa apoio em chamado reso
     }
   }
 });
+test('redefinição de senha pelo ADMIN libera a troca de senha bloqueada', async () => {
+  const user = await makeUser('FUNCIONARIO');
+  for (let i = 0; i < 10; i++)
+    await assert.rejects(changePassword(user.id, WRONG_PASSWORD, 'NovaSenha123'), /incorreta/);
+  await assert.rejects(changePassword(user.id, password, 'NovaSenha123'), /Muitas tentativas/);
+  await service.resetPassword(admin, user.id, 'Temporaria123');
+  await changePassword(user.id, 'Temporaria123', 'NovaSenha123');
+  assert.equal((await login(user.username, 'NovaSenha123')).mustChangePassword, false);
+});

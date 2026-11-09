@@ -5,6 +5,7 @@ import { Plus } from 'lucide-react';
 import { requireUser } from '@/lib/auth';
 import { listTickets } from '@/lib/services';
 import { resetInvalidFilters } from '@/lib/invalid-filters';
+import { InvalidFilterNotice } from '@/components/invalid-filter-notice';
 import { TicketList } from '@/components/tickets';
 import { Pagination } from '@/components/pagination';
 import { redirect } from 'next/navigation';
@@ -82,6 +83,7 @@ export default async function TicketsPage({
           {employee ? 'Abrir chamado' : 'Atendimento rápido'}
         </Link>
       </div>
+      <InvalidFilterNotice aviso={params.aviso} />
       {!employee && (
         <>
           <nav className="tabs" aria-label="Filtrar chamados">

@@ -24,13 +24,21 @@ const run = (error: unknown, params: object, path = '/gestor') => {
 };
 
 test('filtro inválido na URL volta para a tela sem filtros', () => {
-  assert.equal(destination(run(new AppError('Período inválido.'), { periodo: 'x' })), '/gestor');
-  assert.equal(destination(run(zodError(), { complexity: 'x' }, '/chamados')), '/chamados');
+  assert.equal(
+    destination(run(new AppError('Período inválido.'), { periodo: 'x' })),
+    '/gestor?aviso=filtro-invalido',
+  );
+  assert.equal(
+    destination(run(zodError(), { complexity: 'x' }, '/chamados')),
+    '/chamados?aviso=filtro-invalido',
+  );
 });
 test('sem filtros na URL ou com outro erro, o erro original é repassado', () => {
   const invalid = new AppError('Período inválido.');
   assert.equal(run(invalid, {}), invalid);
   assert.equal(run(invalid, { periodo: undefined }), invalid);
+  // The notice itself is not a filter: an error on the clean page must not loop.
+  assert.equal(run(invalid, { aviso: 'filtro-invalido' }), invalid);
   for (const other of [
     new AppError('Sem permissão.', 403),
     new AppError('Nada.', 404),

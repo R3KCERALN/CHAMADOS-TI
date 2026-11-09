@@ -1,5 +1,6 @@
 import { LiveUpdates } from '@/components/live-updates';
 import { operationalRevision } from '@/lib/live-updates';
+import { Fragment } from 'react';
 import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
 import {
@@ -381,13 +382,13 @@ export default async function TicketPage({
           {tech && (
             <section className="panel padded">
               <h2>Localização</h2>
-              <ActionForm
-                key={`location-${ticket.companyId}-${ticket.unitId}`}
-                action={ticketAction}
-              >
+              <ActionForm action={ticketAction}>
                 <input type="hidden" name="ticketId" value={id} />
                 <input type="hidden" name="intent" value="location" />
+                {/* Key the fields, not the form: refreshed values replace stale ones and the
+                    form keeps its success message. */}
                 <LocationFields
+                  key={`location-${ticket.companyId}-${ticket.unitId}`}
                   companies={companies}
                   initialCompanyId={ticket.companyId}
                   initialUnitId={ticket.unitId}
@@ -398,46 +399,45 @@ export default async function TicketPage({
               <p className="muted small">
                 Opcional. Não altera o impacto informado pelo solicitante.
               </p>
-              <ActionForm
-                key={`classify-${ticket.categoryId}-${ticket.complexity}`}
-                action={ticketAction}
-              >
+              <ActionForm action={ticketAction}>
                 <Hidden id={id} intent="classify" />
-                <div className="field">
-                  <label htmlFor="technical-category">Categoria técnica</label>
-                  <select
-                    id="technical-category"
-                    name="categoryId"
-                    defaultValue={ticket.categoryId || ''}
-                    aria-describedby="categoryId-error"
-                  >
-                    <option value="">Sem categoria</option>
-                    {categories.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.name}
-                        {!c.active ? ' (inativa)' : ''}
-                      </option>
-                    ))}
-                  </select>
-                  <FieldError name="categoryId" id="categoryId-error" />
-                </div>
-                <div className="field">
-                  <label htmlFor="technical-complexity">Complexidade operacional</label>
-                  <select
-                    id="technical-complexity"
-                    name="complexity"
-                    defaultValue={ticket.complexity || ''}
-                    aria-describedby="complexity-error"
-                  >
-                    <option value="">Não classificada</option>
-                    {Object.entries(complexityLabels).map(([key, label]) => (
-                      <option key={key} value={key}>
-                        {label}
-                      </option>
-                    ))}
-                  </select>
-                  <FieldError name="complexity" id="complexity-error" />
-                </div>
+                <Fragment key={`classify-${ticket.categoryId}-${ticket.complexity}`}>
+                  <div className="field">
+                    <label htmlFor="technical-category">Categoria técnica</label>
+                    <select
+                      id="technical-category"
+                      name="categoryId"
+                      defaultValue={ticket.categoryId || ''}
+                      aria-describedby="categoryId-error"
+                    >
+                      <option value="">Sem categoria</option>
+                      {categories.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.name}
+                          {!c.active ? ' (inativa)' : ''}
+                        </option>
+                      ))}
+                    </select>
+                    <FieldError name="categoryId" id="categoryId-error" />
+                  </div>
+                  <div className="field">
+                    <label htmlFor="technical-complexity">Complexidade operacional</label>
+                    <select
+                      id="technical-complexity"
+                      name="complexity"
+                      defaultValue={ticket.complexity || ''}
+                      aria-describedby="complexity-error"
+                    >
+                      <option value="">Não classificada</option>
+                      {Object.entries(complexityLabels).map(([key, label]) => (
+                        <option key={key} value={key}>
+                          {label}
+                        </option>
+                      ))}
+                    </select>
+                    <FieldError name="complexity" id="complexity-error" />
+                  </div>
+                </Fragment>
                 <Submit className="button secondary">Salvar classificação</Submit>
               </ActionForm>
             </section>

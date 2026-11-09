@@ -111,11 +111,13 @@ export async function logout(token: string | undefined) {
       await tx.session.deleteMany({ where: { tokenHash: tokenHash(token) } });
     });
 }
+export const passwordChangeThrottleKey = (userId: string) =>
+  tokenHash(`${APP_ORGANIZATION_ID}:change-password:${userId}`);
 export async function changePassword(userId: string, currentPassword: string, newPassword: string) {
   if (currentPassword === newPassword)
     throw new AppError('A nova senha deve ser diferente da senha atual.');
   passwordSchema.parse(newPassword);
-  const throttleKey = tokenHash(`${APP_ORGANIZATION_ID}:change-password:${userId}`);
+  const throttleKey = passwordChangeThrottleKey(userId);
   const now = new Date();
   await db.loginThrottle.deleteMany({ where: { expiresAt: { lt: now } } });
   await consumeAttempt(throttleKey, 10, new Date(now.getTime() + 15 * 60 * 1000));

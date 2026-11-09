@@ -5,7 +5,7 @@ import { db } from './db';
 import { actor } from './access';
 import { resolveLocation, validateUserLocations } from './organization-service';
 import { AppError } from './errors';
-import { hashPassword, publicUserSelect } from './auth-service';
+import { hashPassword, passwordChangeThrottleKey, publicUserSelect } from './auth-service';
 import { userSchema, ticketSchema, statusSchema, passwordSchema } from './validation';
 import type { Prisma, Role, Ticket } from '@/generated/prisma/client';
 type Tx = Prisma.TransactionClient;
@@ -182,6 +182,8 @@ export async function resetPassword(actorId: string, userId: string, password: s
     await tx.session.deleteMany({ where: { userId } });
     await tx.pushSubscription.updateMany({ where: { userId }, data: { active: false } });
     await tx.userAudit.create({ data: { actorId, subjectId: userId, action: 'SENHA_REDEFINIDA' } });
+    // A fresh temporary password must not stay blocked by earlier failed change attempts.
+    await tx.loginThrottle.deleteMany({ where: { key: passwordChangeThrottleKey(userId) } });
   });
 }
 export async function createTicket(actorId: string, input: unknown, requesterId?: string) {

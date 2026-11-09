@@ -10,6 +10,7 @@ import { organizationLabels as labels } from '@/lib/organization-labels';
 import { complexityLabels } from '@/lib/labels';
 import { queryString, type SearchParams } from '@/lib/period';
 import { resetInvalidFilters } from '@/lib/invalid-filters';
+import { InvalidFilterNotice } from '@/components/invalid-filter-notice';
 export default async function CompanyDetail({
   params,
   searchParams,
@@ -58,6 +59,7 @@ export default async function CompanyDetail({
           Consultar chamados
         </Link>
       </div>
+      <InvalidFilterNotice aviso={query.aviso} />
       <ManagementFilters options={options} values={values} lockedCompany={id} />
       <section className="metric-grid">
         <MetricCard
