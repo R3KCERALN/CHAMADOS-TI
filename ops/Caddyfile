@@ -9,6 +9,9 @@
 	request_body {
 		max_size 256KB
 	}
+	# O app não usa next/image; fecha a superfície do otimizador de imagens.
+	@next_image path /_next/image /_next/image/*
+	respond @next_image 404
 	reverse_proxy app:3000 {
 		# Overwrite, never trust a client-supplied address for login throttling.
 		header_up X-Client-IP {remote_host}
