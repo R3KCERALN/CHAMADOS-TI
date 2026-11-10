@@ -180,6 +180,7 @@ export async function createTicketAction(_: FormState, form: FormData): Promise<
   redirect(`/chamados/${id}?criado=1`);
 }
 export async function ticketAction(_: FormState, form: FormData): Promise<FormState> {
+  let moved = false;
   try {
     await sameOrigin();
     const user = await requireActionUser();
@@ -219,14 +220,20 @@ export async function ticketAction(_: FormState, form: FormData): Promise<FormSt
       case 'comment':
         await service.addComment(user.id, id, value(form, 'content'));
         break;
+      case 'team-move':
+        await service.moveTicketTeam(user.id, id, value(form, 'teamId'));
+        moved = true;
+        break;
       default:
         throw new AppError('Operação inválida.');
     }
     revalidatePath('/', 'layout');
-    return { success: 'Atualização registrada.' };
+    if (!moved) return { success: 'Atualização registrada.' };
   } catch (error) {
     return failure(error);
   }
+  // The old team usually loses access to the ticket after the move.
+  redirect('/chamados?movida=1');
 }
 export async function categoryAction(_: FormState, form: FormData): Promise<FormState> {
   try {

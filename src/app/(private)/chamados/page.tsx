@@ -23,7 +23,8 @@ export default async function TicketsPage({
   const user = await requireUser();
   if (user.role === 'GESTOR') redirect('/gestor');
   const revision = await operationalRevision(user.id);
-  const params = await searchParams,
+  // `movida` is a one-shot notice: keep it out of the tab and pagination links.
+  const { movida, ...params } = await searchParams,
     employee = user.role === 'FUNCIONARIO';
   const filter = [
     'novos',
@@ -95,6 +96,11 @@ export default async function TicketsPage({
         </Link>
       </div>
       <InvalidFilterNotice aviso={params.aviso} />
+      {movida === '1' && (
+        <p className="notice success" role="status">
+          Chamado movido para a outra equipe. Ele voltou como novo na fila dela.
+        </p>
+      )}
       {!employee && (
         <>
           <nav className="tabs" aria-label="Filtrar chamados">

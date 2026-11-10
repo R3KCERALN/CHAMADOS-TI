@@ -626,6 +626,55 @@ export async function assignTicket(actorId: string, ticketId: string, userId: st
     });
   });
 }
+// A ticket opened in the wrong team goes back to the other team's queue as NOVO: the previous
+// assignee, wait and category (which belongs to the old team) are cleared; supports stay.
+export async function moveTicketTeam(
+  actorId: string,
+  ticketId: string,
+  teamId: string,
+): Promise<void> {
+  return db.$transaction(async (tx) => {
+    const user = await actor(tx, actorId, techRoles);
+    const ticket = await lockedTicket(tx, ticketId, user.organizationId);
+    visible(user, ticket);
+    manages(user.role, user.id, ticket);
+    const team = await requireTeam(tx, user.organizationId, teamId);
+    if (team.id === ticket.teamId) throw new AppError('Este chamado já é desta equipe.', 409);
+    if (ticket.status === 'RESOLVIDO')
+      throw new AppError('Chamado resolvido não pode mudar de equipe.', 409);
+    const occurredAt = new Date();
+    await tx.ticket.update({
+      where: { id: ticketId },
+      data: {
+        teamId: team.id,
+        status: 'NOVO',
+        assigneeId: null,
+        startedAt: null,
+        waitingReason: null,
+        waitingNote: null,
+        categoryId: null,
+      },
+    });
+    await recordTicketEvent(tx, {
+      data: {
+        ticketId,
+        actorId,
+        type: 'EQUIPE_ALTERADA',
+        createdAt: occurredAt,
+        fromStatus: ticket.status,
+        toStatus: 'NOVO',
+        previousCategoryId: ticket.categoryId,
+        nextCategoryId: null,
+        metadata: {
+          previousTeamId: ticket.teamId,
+          nextTeamId: team.id,
+          previousAssigneeId: ticket.assigneeId,
+          previousCategoryId: ticket.categoryId,
+        },
+      },
+    });
+  });
+}
 export async function addComment(actorId: string, ticketId: string, content: string) {
   const text = z.string().trim().min(1, 'Escreva um comentário.').max(3000).parse(content);
   return db.$transaction(async (tx) => {

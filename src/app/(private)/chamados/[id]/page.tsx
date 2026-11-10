@@ -33,6 +33,14 @@ import {
   statusLabels,
   complexityLabels,
 } from '@/lib/labels';
+// Team ids are stored in the event metadata; the names come from the organization's teams.
+function teamMove(metadata: unknown, names: Map<string, string>) {
+  if (!metadata || typeof metadata !== 'object') return null;
+  const { previousTeamId, nextTeamId } = metadata as Record<string, unknown>;
+  const name = (teamId: unknown) =>
+    (typeof teamId === 'string' && names.get(teamId)) || 'outra equipe';
+  return `de ${name(previousTeamId)} para ${name(nextTeamId)}`;
+}
 function Hidden({ id, intent }: { id: string; intent: string }) {
   return (
     <>
@@ -95,6 +103,17 @@ export default async function TicketPage({
     (t) => !ticket.participants.some((p) => p.userId === t.id),
   );
   const created = search.criado;
+  // Also for the requester: the timeline shows the team move by name.
+  const teams = await db.team.findMany({
+    where: { organizationId: user.organizationId },
+    select: { id: true, name: true, active: true },
+  });
+  const teamNames = new Map(teams.map((t) => [t.id, t.name]));
+  // The principal or an ADMIN can send an unresolved ticket to the other (active) team.
+  const moveTarget =
+    manage && ticket.status !== 'RESOLVIDO'
+      ? teams.find((t) => t.active && t.id !== ticket.teamId)
+      : undefined;
   const categories = tech
     ? await db.category.findMany({
         where: {
@@ -251,6 +270,20 @@ export default async function TicketPage({
                   </details>
                 </>
               )}
+              {moveTarget && (
+                <details className="action-details">
+                  <summary>Mudar de equipe</summary>
+                  <ActionForm action={ticketAction}>
+                    <Hidden id={id} intent="team-move" />
+                    <input type="hidden" name="teamId" value={moveTarget.id} />
+                    <p className="muted small">
+                      O chamado volta como novo, sem responsável, para a equipe {moveTarget.name}. A
+                      categoria técnica é limpa e os técnicos de apoio continuam.
+                    </p>
+                    <Submit className="button secondary">Mover para {moveTarget.name}</Submit>
+                  </ActionForm>
+                </details>
+              )}
             </section>
           )}
           <section className="panel padded">
@@ -329,7 +362,10 @@ export default async function TicketPage({
                         {formatDate(event.createdAt)}
                       </time>
                     </p>
-                    {event.fromStatus && event.toStatus && (
+                    {event.type === 'EQUIPE_ALTERADA' && (
+                      <p className="event-detail">{teamMove(event.metadata, teamNames)}</p>
+                    )}
+                    {event.fromStatus && event.toStatus && event.fromStatus !== event.toStatus && (
                       <p className="event-detail">
                         {statusLabels[event.fromStatus]} → {statusLabels[event.toStatus]}
                       </p>

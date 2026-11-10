@@ -787,3 +787,92 @@ test('assumir e transferir só dentro da equipe do chamado', async () => {
   await service.claimTicket(eletricista, eletrica.id);
   await service.assignTicket(eletricista, eletrica.id, eletricista2);
 });
+const forbidden = (error: unknown) => error instanceof AppError && error.status === 403;
+test('responsável ou ADMIN move o chamado para a outra equipe, que o recebe como novo', async () => {
+  const category = await db.category.create({
+    data: { organizationId, teamId: tiTeam, name: `Rede ${randomBytes(4).toString('hex')}` },
+  });
+  const ticket = await teamTicket(tiTeam, 'Na verdade é a tomada do computador.');
+  await service.claimTicket(tech, ticket.id);
+  await service.classifyTicket(tech, ticket.id, { categoryId: category.id, complexity: 'MEDIA' });
+  await service.changeStatus(tech, ticket.id, { status: 'AGUARDANDO', waitingReason: 'PECA' });
+  await service.setSupport(tech, ticket.id, eletricista, true);
+  await service.moveTicketTeam(tech, ticket.id, eletricaTeam);
+  const final = await db.ticket.findUniqueOrThrow({
+    where: { id: ticket.id },
+    include: { participants: true },
+  });
+  assert.equal(final.status, 'NOVO');
+  assert.equal(final.assigneeId, null);
+  assert.equal(final.startedAt, null);
+  assert.equal(final.waitingReason, null);
+  assert.equal(final.waitingNote, null);
+  assert.equal(final.categoryId, null);
+  assert.equal(final.teamId, eletricaTeam);
+  assert.deepEqual(
+    final.participants.map((p) => p.userId),
+    [eletricista],
+  );
+  const last = await db.ticketEvent.findFirstOrThrow({
+    where: { ticketId: ticket.id },
+    orderBy: { sequence: 'desc' },
+  });
+  assert.equal(last.type, 'EQUIPE_ALTERADA');
+  assert.equal(last.actorId, tech);
+  assert.equal(last.fromStatus, 'AGUARDANDO');
+  assert.equal(last.toStatus, 'NOVO');
+  assert.equal(last.previousCategoryId, category.id);
+  assert.equal(last.nextCategoryId, null);
+  assert.deepEqual(last.metadata, {
+    previousTeamId: tiTeam,
+    nextTeamId: eletricaTeam,
+    previousAssigneeId: tech,
+    previousCategoryId: category.id,
+  });
+  // The old team loses access; the support technician keeps it.
+  await assert.rejects(service.getTicket(tech, ticket.id), notFound);
+  assert.equal((await service.getTicket(eletricista, ticket.id)).id, ticket.id);
+  // ADMIN moves a NOVO ticket back.
+  await service.moveTicketTeam(admin, ticket.id, tiTeam);
+  assert.equal((await db.ticket.findUniqueOrThrow({ where: { id: ticket.id } })).teamId, tiTeam);
+});
+test('não move para a mesma equipe, nem chamado resolvido, nem quem não é responsável', async () => {
+  const ticket = await teamTicket(tiTeam, 'Teclado sem resposta.');
+  await service.claimTicket(tech, ticket.id);
+  await service.setSupport(tech, ticket.id, eletricista, true);
+  await assert.rejects(service.moveTicketTeam(tech, ticket.id, tiTeam), /já é desta equipe/);
+  await assert.rejects(service.moveTicketTeam(tech2, ticket.id, eletricaTeam), forbidden);
+  await assert.rejects(service.moveTicketTeam(eletricista, ticket.id, eletricaTeam), forbidden);
+  await assert.rejects(service.moveTicketTeam(employee, ticket.id, eletricaTeam));
+  await assert.rejects(service.moveTicketTeam(tech, ticket.id, 'equipe-inexistente'), /equipe/);
+  await service.changeStatus(tech, ticket.id, { status: 'RESOLVIDO' });
+  await assert.rejects(
+    service.moveTicketTeam(admin, ticket.id, eletricaTeam),
+    /resolvido não pode mudar de equipe/,
+  );
+  const final = await db.ticket.findUniqueOrThrow({ where: { id: ticket.id } });
+  assert.equal(final.teamId, tiTeam);
+  assert.equal(final.status, 'RESOLVIDO');
+  assert.ok(!(await eventTypes(ticket.id)).includes('EQUIPE_ALTERADA'));
+});
+test('após mover, só a nova equipe assume; mudanças concorrentes geram um único evento', async () => {
+  const ticket = await teamTicket(tiTeam, 'Disjuntor do rack desarmando.');
+  await service.moveTicketTeam(admin, ticket.id, eletricaTeam);
+  await assert.rejects(service.claimTicket(tech, ticket.id));
+  await service.claimTicket(eletricista, ticket.id);
+  assert.equal(
+    (await db.ticket.findUniqueOrThrow({ where: { id: ticket.id } })).assigneeId,
+    eletricista,
+  );
+  for (let round = 0; round < RACE_ROUNDS; round++) {
+    const raced = await teamTicket(tiTeam, `Corrida de equipe ${round}`);
+    const results = await Promise.allSettled([
+      service.moveTicketTeam(admin, raced.id, eletricaTeam),
+      service.moveTicketTeam(admin, raced.id, eletricaTeam),
+    ]);
+    assert.equal(results.filter((r) => r.status === 'fulfilled').length, 1, `rodada ${round}`);
+    const refused = results.find((r) => r.status === 'rejected')!;
+    assert.ok(refused.reason instanceof AppError, `rodada ${round}: ${refused.reason}`);
+    assert.deepEqual(await eventTypes(raced.id), ['CRIADO', 'EQUIPE_ALTERADA'], `rodada ${round}`);
+  }
+});
