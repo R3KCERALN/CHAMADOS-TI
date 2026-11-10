@@ -4,7 +4,9 @@
 
 Uma instalação, uma Organization, um processo Next.js persistente (inclui worker Web Push), PostgreSQL 17 e Caddy. `compose.production.yaml` é independente do Compose de desenvolvimento: projeto/volumes próprios, sem banco/porta compartilhados com demo. Não há deploy externo automático.
 
-VPS Linux com Docker Engine, Compose **2.24.4+** e OpenSSL, DNS A/AAAA correto e portas TCP 80/443 abertas; UDP 443 é opcional para HTTP/3. Reserve inicialmente 2 vCPU/4 GB RAM e espaço para banco, imagens e backups; ajuste com medição. Compilar na VPS demanda memória adicional. Restrinja SSH no firewall; não exponha Docker, PostgreSQL ou a porta 3000. Mantenha Docker habilitado no boot (`sudo systemctl enable --now docker`).
+VPS Linux com Docker Engine, Compose **2.24.4+** e OpenSSL, DNS **somente A (IPv4)** e portas TCP 80/443 abertas; UDP 443 é opcional para HTTP/3. Reserve inicialmente 2 vCPU/4 GB RAM e espaço para banco, imagens e backups; ajuste com medição. Compilar na VPS demanda memória adicional. Restrinja SSH no firewall; não exponha Docker, PostgreSQL ou a porta 3000. Mantenha Docker habilitado no boot (`sudo systemctl enable --now docker`).
+
+Não publique registro AAAA (remova-o se o provedor criar automaticamente): a rede `edge` não tem IPv6, então o Docker entregaria todo acesso IPv6 ao Caddy com o mesmo endereço interno e esses usuários dividiriam um único limite de login por IP. Habilitar IPv6 exige rede `edge` com IPv6 sem NAT, regras de firewall próprias e o teste do passo 11 repetido por IPv6.
 
 Somente Caddy publica portas. HTTPS/certificados são automáticos; volumes `caddy_data`/`caddy_config` preservam seu estado. O app roda como usuário não root, filesystem somente leitura, cache temporário, sem capabilities. Rede do banco é interna; app conserva saída para os serviços Web Push dos navegadores. Não colocar outro proxy na frente sem revisar origem/IP confiável.
 
@@ -27,6 +29,14 @@ docker compose --env-file .env.production -f compose.production.yaml run --rm mi
 ```
 
 10. Abra a origem HTTPS, troque a senha obrigatória e configure filiais/usuários. Remova `INITIAL_ADMIN_PASSWORD` do arquivo após o bootstrap e remova o container finalizado de migrations (`docker compose --env-file .env.production -f compose.production.yaml rm -f migrate`), pois seu ambiente pode conservar a senha temporária. O próximo deploy recria esse serviço.
+11. Antes do uso oficial, confirme que o app recebe o IP real do cliente. `dig +short AAAA <APP_DOMAIN>` deve voltar vazio. De um aparelho fora da VPS, anote seu IPv4 público e faça uma tentativa de login (correta ou não). Em até 15 min, na VPS:
+
+```bash
+KEY=$(printf 'ip:%s:%s' '<APP_ORGANIZATION_ID>' '<SEU_IPV4_PUBLICO>' | sha256sum | cut -d' ' -f1)
+echo "SELECT attempts FROM \"LoginThrottle\" WHERE key = '$KEY';" | docker compose --env-file .env.production -f compose.production.yaml exec -T db sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -tA'
+```
+
+Deve retornar um número. Resultado vazio significa que o Caddy não está vendo o IP do cliente (outro proxy/NAT na frente ou AAAA ativo): não libere o uso até corrigir, porque todos dividiriam o mesmo limite de login.
 
 `APP_ENV=production`, cookies Secure e worker ativo são fixados pelo Compose. O startup rejeita URL não HTTPS, origem divergente, configurações ausentes, timezone inválido, banco demo/teste e VAPID incompleto/incompatível. Os builds locais continuam usando `.env`/HTTP localhost sem selecionar `APP_ENV=production`.
 
