@@ -2,7 +2,7 @@ import { before, after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash, randomBytes } from 'node:crypto';
 import argon2 from 'argon2';
-import { syntheticCnpj } from './fixtures';
+import { syntheticCnpj, teamId } from './fixtures';
 import { APP_ORGANIZATION_ID } from '../src/lib/config';
 import { db } from '../src/lib/db';
 import {
@@ -37,6 +37,7 @@ async function makeUser(role: Role, options = {}) {
       role,
       passwordHash: hash,
       mustChangePassword: false,
+      ...(role === 'TI' && { teamId: await teamId(organizationId, 'TI') }),
       ...options,
     },
   });
@@ -129,6 +130,7 @@ test('somente ADMIN lista e cria usuários; role enviada não promove o autor', 
     primaryCompanyId,
     departmentId,
     role: 'TI',
+    teamId: await teamId(organizationId, 'TI'),
     password,
   };
   await assert.rejects(service.createUser(employee, input), /permissão/);
@@ -141,6 +143,97 @@ test('somente ADMIN lista e cria usuários; role enviada não promove o autor', 
     await db.userAudit.count({ where: { subjectId: user.id, action: 'USUARIO_CRIADO' } }),
     1,
   );
+});
+test('técnico exige equipe ativa da própria organização; outros papéis não têm equipe', async () => {
+  const base = {
+    name: 'Pessoa com equipe',
+    primaryCompanyId,
+    departmentId,
+    password,
+  };
+  const username = () => `equipe.${randomBytes(4).toString('hex')}`;
+  await assert.rejects(
+    service.createUser(admin, { ...base, username: username(), role: 'TI' }),
+    /Selecione a equipe/,
+  );
+  const foreignOrg = await db.organization.create({ data: { name: 'Equipes de outra org' } });
+  await assert.rejects(
+    service.createUser(admin, {
+      ...base,
+      username: username(),
+      role: 'TI',
+      teamId: await teamId(foreignOrg.id, 'TI'),
+    }),
+    /Selecione a equipe/,
+  );
+  const eletrica = await teamId(organizationId, 'ELETRICA');
+  const electrician = await service.createUser(admin, {
+    ...base,
+    username: username(),
+    role: 'TI',
+    teamId: eletrica,
+  });
+  assert.equal(
+    (await db.user.findUniqueOrThrow({ where: { id: electrician.id } })).teamId,
+    eletrica,
+  );
+  const employeeWithTeam = await service.createUser(admin, {
+    ...base,
+    username: username(),
+    role: 'FUNCIONARIO',
+    teamId: eletrica,
+  });
+  assert.equal(
+    (await db.user.findUniqueOrThrow({ where: { id: employeeWithTeam.id } })).teamId,
+    null,
+  );
+});
+test('troca de equipe é bloqueada enquanto o técnico for responsável por chamados não resolvidos', async () => {
+  const technician = await makeUser('TI');
+  const ticket = await newTicket();
+  await service.claimTicket(technician.id, ticket.id);
+  const eletrica = await teamId(organizationId, 'ELETRICA');
+  const change = (teamId: string) =>
+    service.updateUser(admin, technician.id, {
+      name: technician.name,
+      username: technician.username,
+      primaryCompanyId,
+      departmentId,
+      role: 'TI',
+      teamId,
+      active: true,
+    });
+  await assert.rejects(change(eletrica), /Transfira os 1 chamado/);
+  assert.equal(
+    (await db.user.findUniqueOrThrow({ where: { id: technician.id } })).teamId,
+    technician.teamId,
+  );
+  await service.changeStatus(technician.id, ticket.id, { status: 'RESOLVIDO', note: 'Feito.' });
+  await change(eletrica);
+  assert.equal(
+    (await db.user.findUniqueOrThrow({ where: { id: technician.id } })).teamId,
+    eletrica,
+  );
+  const audit = await db.userAudit.findFirstOrThrow({
+    where: { subjectId: technician.id, action: 'USUARIO_ATUALIZADO' },
+    orderBy: { createdAt: 'desc' },
+  });
+  const metadata = audit.metadata as { before: { teamId: string }; after: { teamId: string } };
+  assert.equal(metadata.before.teamId, technician.teamId);
+  assert.equal(metadata.after.teamId, eletrica);
+});
+test('rebaixar técnico para funcionário limpa a equipe', async () => {
+  const technician = await makeUser('TI');
+  assert.ok(technician.teamId);
+  await service.updateUser(admin, technician.id, {
+    name: technician.name,
+    username: technician.username,
+    primaryCompanyId,
+    departmentId,
+    role: 'FUNCIONARIO',
+    active: true,
+  });
+  assert.equal((await db.user.findUniqueOrThrow({ where: { id: technician.id } })).teamId, null);
 });
 test('username é normalizado e duplicidade recusada', async () => {
   const input = {

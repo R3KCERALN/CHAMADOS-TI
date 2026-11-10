@@ -4,7 +4,7 @@ import { db } from '../../src/lib/db';
 import { hashPassword, login } from '../../src/lib/auth-service';
 import { APP_ORGANIZATION_ID } from '../../src/lib/config';
 import * as service from '../../src/lib/services';
-import { syntheticCnpj } from '../fixtures';
+import { syntheticCnpj, teamId } from '../fixtures';
 import type { Role } from '../../src/generated/prisma/client';
 let employee: string, tech: string, tech2: string;
 const password = process.env.TEST_PASSWORD!;
@@ -49,6 +49,7 @@ test.beforeAll(async () => {
               username: `live.${randomBytes(6).toString('hex')}`,
               passwordHash: hash,
               mustChangePassword: false,
+              ...(role === 'TI' && { teamId: await teamId(organizationId, 'TI') }),
             },
           })
         ).id,

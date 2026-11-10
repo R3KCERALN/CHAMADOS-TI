@@ -11,7 +11,7 @@ import { operationalRevision } from '../src/lib/live-updates';
 import { validPushEndpoint } from '../src/lib/push-config';
 import { ticketReturnTo } from '../src/lib/return-to';
 import * as service from '../src/lib/services';
-import { syntheticCnpj } from './fixtures';
+import { syntheticCnpj, teamId } from './fixtures';
 import type { Role } from '../src/generated/prisma/client';
 const org = APP_ORGANIZATION_ID;
 let employee: string, tech: string, support: string, other: string, admin: string, foreign: string;
@@ -40,6 +40,7 @@ async function person(role: Role, organizationId = org, departmentId = departmen
       username: `push.${randomBytes(6).toString('hex')}`,
       passwordHash: hash,
       mustChangePassword: false,
+      ...(role === 'TI' && { teamId: await teamId(organizationId, 'TI') }),
       primaryCompanyId: organizationId === org ? company : null,
     },
   });

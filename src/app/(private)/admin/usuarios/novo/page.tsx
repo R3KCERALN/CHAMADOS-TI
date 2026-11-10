@@ -3,6 +3,7 @@ import { notFound } from 'next/navigation';
 import { ArrowLeft } from 'lucide-react';
 import { requireUser } from '@/lib/auth';
 import { db } from '@/lib/db';
+import { teamOptions } from '@/lib/teams';
 import { locationOptions } from '@/lib/organization-service';
 import { ActionForm, Submit } from '@/components/form';
 import { UserFields } from '@/components/user-fields';
@@ -15,6 +16,7 @@ export default async function CreateUserPage() {
     orderBy: { name: 'asc' },
   });
   const companies = await locationOptions(user.id, false);
+  const teams = await teamOptions(db, user.organizationId);
   return (
     <div className="narrow">
       <Link className="back-link" href="/admin/usuarios">
@@ -30,7 +32,7 @@ export default async function CreateUserPage() {
       </div>
       <section className="panel padded">
         <ActionForm action={createUserAction}>
-          <UserFields companies={companies} departments={departments} />
+          <UserFields companies={companies} departments={departments} teams={teams} />
           <Submit>Criar usuário</Submit>
         </ActionForm>
       </section>

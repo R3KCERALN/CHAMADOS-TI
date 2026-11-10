@@ -46,7 +46,10 @@ async function main() {
     ['demo.ana', 'Ana Financeiro', 'FUNCIONARIO'],
     ['demo.pedro', 'Pedro Comercial', 'FUNCIONARIO'],
     ['demo.julia', 'Júlia RH', 'FUNCIONARIO'],
+    ['demo.eletricista', 'Eduardo Eletricista', 'TI'],
   ] as const;
+  const teams = await db.team.findMany({ where: { organizationId } });
+  const teamIdOf = (key: string) => teams.find((t) => t.key === key)!.id;
   const users = [];
   for (let i = 0; i < people.length; i++) {
     const [username, name, role] = people[i];
@@ -57,6 +60,8 @@ async function main() {
           username,
           name,
           role: role as Role,
+          teamId:
+            role === 'TI' ? teamIdOf(username === 'demo.eletricista' ? 'ELETRICA' : 'TI') : null,
           departmentId: role === 'TI' ? ti.id : departments[i % departments.length].id,
           passwordHash: hash,
           mustChangePassword: true,
@@ -66,7 +71,7 @@ async function main() {
     );
   }
   const technicians = users.slice(1, 5),
-    requesters = users.slice(5);
+    requesters = users.slice(5, 8);
   const now = Date.now();
   const hour = 3600000;
   for (let i = 0; i < 54; i++) {

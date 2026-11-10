@@ -112,6 +112,7 @@ function userFields(form: FormData) {
     username: value(form, 'username'),
     departmentId: value(form, 'departmentId'),
     role: value(form, 'role'),
+    teamId: value(form, 'teamId') || null,
     primaryCompanyId: value(form, 'primaryCompanyId') || null,
     primaryUnitId: value(form, 'primaryUnitId') || null,
     additionalCompanyIds: form.getAll('additionalCompanyIds').map(String),

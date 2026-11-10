@@ -94,6 +94,8 @@ model User {
   mustChangePassword Boolean @default(true)
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
+  teamId String?
+  team Team? @relation(fields: [teamId], references: [id], onDelete: Restrict)
   primaryCompanyId String?
   primaryCompany Company? @relation(fields: [primaryCompanyId], references: [id], onDelete: Restrict)
   primaryUnitId String?
@@ -115,6 +117,7 @@ model User {
   @@index([organizationId, role, active])
   @@index([primaryCompanyId])
   @@index([primaryUnitId])
+  @@index([teamId])
 }
 model Session {
   id        String @id @default(cuid())
@@ -261,6 +264,18 @@ model Organization {
   categories Category[]
   companies Company[]
   tickets Ticket[]
+  teams Team[]
+}
+model Team {
+  id String @id @default(cuid())
+  organizationId String
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  key String
+  name String
+  active Boolean @default(true)
+  createdAt DateTime @default(now())
+  users User[]
+  @@unique([organizationId, key])
 }
 model Company {
   id String @id @default(cuid())

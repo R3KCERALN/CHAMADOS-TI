@@ -5,6 +5,7 @@ import { readdirSync } from 'node:fs';
 import { Client } from 'pg';
 import { spawnSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
+const requestedFiles = process.argv.slice(2).filter((a) => a.endsWith('.test.ts'));
 const original = new URL(process.env.DATABASE_URL);
 const testName = `central_test_${Date.now()}_${randomBytes(4).toString('hex')}`;
 const adminUrl = new URL(original);
@@ -45,10 +46,12 @@ try {
       'tsx',
       '--test',
       '--test-concurrency=1',
-      ...readdirSync('tests')
-        .filter((f) => f.endsWith('.test.ts'))
-        .sort()
-        .map((f) => `tests/${f}`),
+      ...(requestedFiles.length
+        ? requestedFiles
+        : readdirSync('tests')
+            .filter((f) => f.endsWith('.test.ts'))
+            .sort()
+            .map((f) => `tests/${f}`)),
     ]);
 } catch (error) {
   console.error(error.message);

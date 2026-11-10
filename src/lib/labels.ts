@@ -2,7 +2,7 @@ import { APP_TIMEZONE } from './config';
 export const roleLabels = {
   ADMIN: 'Administrador',
   FUNCIONARIO: 'Funcionário',
-  TI: 'Tecnologia da Informação',
+  TI: 'Técnico',
   GESTOR: 'Gestor',
 };
 export const statusLabels = {

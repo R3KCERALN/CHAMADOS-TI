@@ -1,7 +1,7 @@
 import { before, after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
-import { syntheticCnpj } from './fixtures';
+import { syntheticCnpj, teamId } from './fixtures';
 import { APP_ORGANIZATION_ID } from '../src/lib/config';
 import { db } from '../src/lib/db';
 import { hashPassword, login, changePassword } from '../src/lib/auth-service';
@@ -60,6 +60,7 @@ before(async () => {
               departmentId,
               passwordHash: hash,
               mustChangePassword: false,
+              ...(role === 'TI' && { teamId: await teamId(organizationId, 'TI') }),
             },
           })
         ).id,

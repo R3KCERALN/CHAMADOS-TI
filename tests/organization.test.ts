@@ -4,7 +4,7 @@ import { randomBytes } from 'node:crypto';
 import { db } from '../src/lib/db';
 import { APP_ORGANIZATION_ID } from '../src/lib/config';
 import { hashPassword, login, getSessionUser } from '../src/lib/auth-service';
-import { syntheticCnpj } from './fixtures';
+import { syntheticCnpj, teamId } from './fixtures';
 import { normalizeCnpj, validCnpj, formatCnpj } from '../src/lib/cnpj';
 import { saveCompany, saveUnit, locationOptions } from '../src/lib/organization-service';
 import * as services from '../src/lib/services';
@@ -67,6 +67,7 @@ before(async () => {
               username: 'org.' + token(),
               passwordHash,
               mustChangePassword: false,
+              ...(role === 'TI' && { teamId: await teamId(organizationId, 'TI') }),
             },
           })
         ).id,

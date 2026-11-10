@@ -5,6 +5,7 @@ import { db } from './db';
 import { actor } from './access';
 import { resolveLocation, validateUserLocations } from './organization-service';
 import { AppError } from './errors';
+import { requireTeam } from './teams';
 import { hashPassword, passwordChangeThrottleKey, publicUserSelect } from './auth-service';
 import { userSchema, ticketSchema, statusSchema, passwordSchema } from './validation';
 import type { Prisma, Role, Ticket } from '@/generated/prisma/client';
@@ -31,7 +32,12 @@ export async function adminUsers(
   const [users, total] = await Promise.all([
     db.user.findMany({
       where,
-      select: { ...publicUserSelect, createdAt: true, department: { select: { name: true } } },
+      select: {
+        ...publicUserSelect,
+        createdAt: true,
+        department: { select: { name: true } },
+        team: { select: { name: true } },
+      },
       orderBy: [{ name: 'asc' }, { id: 'asc' }],
       take: 20,
       skip: (safePage - 1) * 20,
@@ -51,9 +57,12 @@ export async function createUser(actorId: string, input: unknown) {
     });
     if (!department) throw new AppError('Setor inválido.');
     const locations = await validateUserLocations(tx, admin.organizationId, data);
+    const teamId =
+      data.role === 'TI' ? (await requireTeam(tx, admin.organizationId, data.teamId)).id : null;
     const user = await tx.user.create({
       data: {
         organizationId: admin.organizationId,
+        teamId,
         primaryCompanyId: locations.primaryCompanyId,
         primaryUnitId: locations.primaryUnitId,
         companyAccess: {
@@ -73,7 +82,7 @@ export async function createUser(actorId: string, input: unknown) {
         actorId,
         subjectId: user.id,
         action: 'USUARIO_CRIADO',
-        metadata: { role: data.role, departmentId: data.departmentId },
+        metadata: { role: data.role, departmentId: data.departmentId, teamId },
       },
     });
     return user;
@@ -105,6 +114,17 @@ export async function updateUser(actorId: string, userId: string, input: unknown
       }))
     )
       throw new AppError('Setor inválido.');
+    const teamId =
+      data.role === 'TI' ? (await requireTeam(tx, admin.organizationId, data.teamId)).id : null;
+    if (before.role === 'TI' && before.teamId !== teamId && teamId) {
+      const open = await tx.ticket.count({
+        where: { assigneeId: userId, status: { not: 'RESOLVIDO' } },
+      });
+      if (open > 0)
+        throw new AppError(
+          `Transfira os ${open} chamado(s) em que esta pessoa é responsável antes de trocar a equipe.`,
+        );
+    }
     const { additionalCompanyIds, additionalUnitIds, ...fields } = data;
     const existingCompanies = await tx.userCompanyAccess.findMany({ where: { userId } });
     const existingUnits = await tx.userUnitAccess.findMany({ where: { userId } });
@@ -136,6 +156,7 @@ export async function updateUser(actorId: string, userId: string, input: unknown
       where: { id: userId },
       data: {
         ...fields,
+        teamId,
         primaryCompanyId: locations.primaryCompanyId,
         primaryUnitId: locations.primaryUnitId,
         companyAccess: {
@@ -158,9 +179,10 @@ export async function updateUser(actorId: string, userId: string, input: unknown
             username: before.username,
             role: before.role,
             departmentId: before.departmentId,
+            teamId: before.teamId,
             active: before.active,
           },
-          after: data,
+          after: { ...data, teamId },
         },
       },
     });
