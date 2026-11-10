@@ -212,6 +212,8 @@ export async function createTicket(actorId: string, input: unknown, requesterId?
   const data = ticketSchema.parse(input);
   return db.$transaction(async (tx) => {
     const quick = !!requesterId || !!data.quick || !!data.requesterName;
+    // Quick service makes the author the assignee: same team-change lock as a claim.
+    if (quick) await lockAssignee(tx, actorId);
     const user = await actor(tx, actorId, quick ? techRoles : ['FUNCIONARIO', 'TI', 'ADMIN']);
     const requester = requesterId
       ? await tx.user.findFirst({
@@ -279,9 +281,20 @@ export async function createTicket(actorId: string, input: unknown, requesterId?
     return ticket;
   });
 }
-function visible(role: Role, userId: string, ticket: Ticket) {
-  if (role === 'GESTOR' || (role === 'FUNCIONARIO' && ticket.requesterId !== userId))
-    throw new AppError('Chamado não encontrado.', 404);
+type Viewer = { id: string; role: Role; teamId: string | null };
+// Read scope: ADMIN sees everything; a technician sees the own team's tickets plus the ones
+// where they are support; the employee sees only the own requests; GESTOR has no detail.
+function canSee(user: Viewer, ticket: Ticket & { participants: { userId: string }[] }) {
+  if (user.role === 'ADMIN') return true;
+  if (user.role === 'TI')
+    return (
+      (!!user.teamId && ticket.teamId === user.teamId) ||
+      ticket.participants.some((p) => p.userId === user.id)
+    );
+  return user.role === 'FUNCIONARIO' && ticket.requesterId === user.id;
+}
+function visible(user: Viewer, ticket: Ticket & { participants: { userId: string }[] }) {
+  if (!canSee(user, ticket)) throw new AppError('Chamado não encontrado.', 404);
 }
 function manages(role: Role, userId: string, ticket: Ticket) {
   if (role !== 'ADMIN' && (role !== 'TI' || ticket.assigneeId !== userId))
@@ -306,6 +319,7 @@ export async function getTicket(
       unit: true,
       department: true,
       category: true,
+      team: { select: { id: true, key: true, name: true } },
       _count: { select: { events: true, comments: true } },
       assignee: { select: { id: true, name: true } },
       participants: { include: { user: { select: { id: true, name: true, active: true } } } },
@@ -329,7 +343,7 @@ export async function getTicket(
     },
   });
   if (!ticket) throw new AppError('Chamado não encontrado.', 404);
-  visible(user.role, user.id, ticket);
+  visible(user, ticket);
   return { ...ticket, events: ticket.events.reverse(), comments: ticket.comments.reverse() };
 }
 export async function listTickets(
@@ -352,6 +366,13 @@ export async function listTickets(
           : filter === 'aguardando'
             ? { status: 'AGUARDANDO' }
             : {};
+  // Queue views are the technician's team; "meus"/"apoio" already include support tickets of
+  // the other team and the assignee views only match the technician's own tickets.
+  if (
+    user.role === 'TI' &&
+    !['meus', 'apoio', 'atendimento', 'minha-espera', 'resolvidos-hoje'].includes(filter)
+  )
+    where.teamId = user.teamId ?? '';
   if (user.role !== 'FUNCIONARIO') {
     if (filter === 'atendimento')
       Object.assign(where, { assigneeId: user.id, status: 'EM_ATENDIMENTO' });
@@ -376,6 +397,7 @@ export async function listTickets(
         unitId: z.string().max(100).optional(),
         categoryId: z.string().max(100).optional(),
         departmentId: z.string().max(100).optional(),
+        teamId: z.string().max(100).optional(),
         impact: z.enum(['BLOQUEADO', 'PARCIAL', 'BAIXO']).optional(),
         complexity: z.enum(['BAIXA', 'MEDIA', 'ALTA', 'CRITICA', 'none']).optional(),
         q: z.string().trim().max(200).optional(),
@@ -386,6 +408,7 @@ export async function listTickets(
     if (fields.categoryId)
       where.categoryId = fields.categoryId === 'none' ? null : fields.categoryId;
     if (fields.departmentId) where.departmentId = fields.departmentId;
+    if (fields.teamId && user.role === 'ADMIN') where.teamId = fields.teamId;
     if (fields.impact) where.impact = fields.impact;
     if (fields.complexity)
       where.complexity = fields.complexity === 'none' ? null : fields.complexity;
@@ -416,6 +439,7 @@ export async function listTickets(
         unit: { select: { name: true } },
         department: { select: { name: true } },
         category: { select: { name: true } },
+        team: { select: { key: true, name: true } },
         assignee: { select: { name: true } },
       },
       // Triage queue: the oldest NOVO first; ties and every other list stay stable by id.
@@ -430,8 +454,14 @@ export async function listTickets(
   ]);
   return { tickets, total, page: safePage };
 }
+// Shared lock on the technician who becomes assignee: updateUser holds FOR UPDATE on that row
+// while checking open tickets, so a team change cannot race a claim or a transfer.
+async function lockAssignee(tx: Tx, userId: string) {
+  await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${userId} FOR SHARE`;
+}
 export async function claimTicket(actorId: string, ticketId: string) {
   return db.$transaction(async (tx) => {
+    await lockAssignee(tx, actorId);
     const user = await actor(tx, actorId, techRoles);
     const occurredAt = new Date();
     const result = await tx.ticket.updateMany({
@@ -440,6 +470,7 @@ export async function claimTicket(actorId: string, ticketId: string) {
         organizationId: user.organizationId,
         status: 'NOVO',
         assigneeId: null,
+        ...(user.role === 'TI' && { teamId: user.teamId ?? '' }),
       },
       data: { assigneeId: actorId, status: 'EM_ATENDIMENTO', startedAt: occurredAt },
     });
@@ -460,7 +491,10 @@ export async function claimTicket(actorId: string, ticketId: string) {
 }
 async function lockedTicket(tx: Tx, ticketId: string, organizationId: string) {
   await tx.$queryRaw`SELECT id FROM "Ticket" WHERE id = ${ticketId} AND "organizationId" = ${organizationId} FOR UPDATE`;
-  const ticket = await tx.ticket.findFirst({ where: { id: ticketId, organizationId } });
+  const ticket = await tx.ticket.findFirst({
+    where: { id: ticketId, organizationId },
+    include: { participants: { select: { userId: true } } },
+  });
   if (!ticket) throw new AppError('Chamado não encontrado.', 404);
   return ticket;
 }
@@ -469,6 +503,7 @@ export async function changeStatus(actorId: string, ticketId: string, input: unk
   return db.$transaction(async (tx) => {
     const user = await actor(tx, actorId, techRoles);
     const ticket = await lockedTicket(tx, ticketId, user.organizationId);
+    visible(user, ticket);
     manages(user.role, user.id, ticket);
     const allowed =
       ticket.status === 'EM_ATENDIMENTO'
@@ -515,6 +550,7 @@ export async function setSupport(actorId: string, ticketId: string, userId: stri
   return db.$transaction(async (tx) => {
     const user = await actor(tx, actorId, techRoles);
     const ticket = await lockedTicket(tx, ticketId, user.organizationId);
+    visible(user, ticket);
     manages(user.role, user.id, ticket);
     if (!ticket.assigneeId || ticket.status === 'RESOLVIDO')
       throw new AppError('O chamado precisa estar em atendimento ou aguardando.');
@@ -550,15 +586,23 @@ export async function assignTicket(actorId: string, ticketId: string, userId: st
   return db.$transaction(async (tx) => {
     const user = await actor(tx, actorId, techRoles);
     const ticket = await lockedTicket(tx, ticketId, user.organizationId);
+    visible(user, ticket);
     manages(user.role, actorId, ticket);
     if (!ticket.assigneeId || ticket.status === 'RESOLVIDO' || ticket.assigneeId === userId)
       throw new AppError('Não é possível transferir este chamado.');
+    await lockAssignee(tx, userId);
+    // The principal is an ADMIN (no team) or a technician of the ticket's team.
     if (
       !(await tx.user.findFirst({
-        where: { id: userId, active: true, role: 'TI', organizationId: user.organizationId },
+        where: {
+          id: userId,
+          active: true,
+          organizationId: user.organizationId,
+          OR: [{ role: 'ADMIN' }, { role: 'TI', teamId: ticket.teamId }],
+        },
       }))
     )
-      throw new AppError('Selecione um técnico ativo.');
+      throw new AppError('Selecione um técnico ativo da equipe do chamado.');
     const removed = await tx.ticketParticipant.deleteMany({ where: { ticketId, userId } });
     if (removed.count)
       await recordTicketEvent(tx, {
@@ -587,7 +631,7 @@ export async function addComment(actorId: string, ticketId: string, content: str
   return db.$transaction(async (tx) => {
     const user = await actor(tx, actorId);
     const ticket = await lockedTicket(tx, ticketId, user.organizationId);
-    visible(user.role, user.id, ticket);
+    visible(user, ticket);
     const comment = await tx.ticketComment.create({
       data: { ticketId, authorId: actorId, content: text },
     });
@@ -642,6 +686,7 @@ export async function classifyTicket(actorId: string, ticketId: string, input: u
   return db.$transaction(async (tx) => {
     const user = await actor(tx, actorId, techRoles);
     const ticket = await lockedTicket(tx, ticketId, user.organizationId);
+    visible(user, ticket);
     if (
       data.categoryId &&
       data.categoryId !== ticket.categoryId &&
@@ -689,6 +734,7 @@ export async function relocateTicket(actorId: string, ticketId: string, input: u
   return db.$transaction(async (tx) => {
     const user = await actor(tx, actorId, techRoles);
     const ticket = await lockedTicket(tx, ticketId, user.organizationId);
+    visible(user, ticket);
     const location = await resolveLocation(tx, user, { ...data, unitId: data.unitId || null });
     if (ticket.companyId === location.companyId && ticket.unitId === location.unitId) return;
     await tx.ticket.update({ where: { id: ticketId }, data: location });

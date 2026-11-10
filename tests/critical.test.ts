@@ -14,6 +14,7 @@ import {
 } from '../src/lib/auth-service';
 import * as service from '../src/lib/services';
 import { AppError } from '../src/lib/errors';
+import { ticketNumber } from '../src/lib/labels';
 import type { Role } from '../src/generated/prisma/client';
 const password = process.env.TEST_PASSWORD!;
 let admin: string,
@@ -21,11 +22,13 @@ let admin: string,
   other: string,
   tech: string,
   tech2: string,
+  eletricista: string,
+  eletricista2: string,
   manager: string,
   departmentId: string,
   primaryCompanyId: string;
 const organizationId = APP_ORGANIZATION_ID;
-let hash: string, tiTeam: string;
+let hash: string, tiTeam: string, eletricaTeam: string;
 async function makeUser(role: Role, options = {}) {
   return db.user.create({
     data: {
@@ -45,6 +48,7 @@ async function makeUser(role: Role, options = {}) {
 before(async () => {
   assert.match(new URL(process.env.DATABASE_URL!).pathname, /^\/central_test_\d+_[a-f0-9]{8}$/);
   tiTeam = await teamId(organizationId, 'TI');
+  eletricaTeam = await teamId(organizationId, 'ELETRICA');
   primaryCompanyId = (
     await db.company.create({
       data: {
@@ -61,6 +65,9 @@ before(async () => {
     (['ADMIN', 'FUNCIONARIO', 'FUNCIONARIO', 'TI', 'TI', 'GESTOR'] as Role[]).map(
       async (role) => (await makeUser(role)).id,
     ),
+  );
+  [eletricista, eletricista2] = await Promise.all(
+    [1, 2].map(async () => (await makeUser('TI', { teamId: eletricaTeam })).id),
   );
 });
 after(() => db.$disconnect());
@@ -670,4 +677,113 @@ test('atendimento rápido usa a equipe de quem registra; ADMIN escolhe', async (
   assert.equal(await db.ticket.count(), before);
   const byAdmin = await service.createTicket(admin, { ...input, teamId: ti }, employee);
   assert.equal(byAdmin.teamId, ti);
+});
+const notFound = (error: unknown) => error instanceof AppError && error.status === 404;
+const queueFilters = [
+  'todos',
+  'novos',
+  'meus',
+  'aguardando',
+  'atendimento',
+  'minha-espera',
+  'apoio',
+  'resolvidos-hoje',
+  'filtro-desconhecido',
+];
+const teamTicket = (team: string, description: string) =>
+  service.createTicket(employee, { description, impact: 'PARCIAL', teamId: team });
+test('técnico só vê a fila e o detalhe da própria equipe', async () => {
+  const marker = `Equipe ${randomBytes(4).toString('hex')}`;
+  const tiNew = await teamTicket(tiTeam, `${marker} rede caiu`);
+  const tiWaiting = await teamTicket(tiTeam, `${marker} impressora`);
+  await service.claimTicket(tech, tiWaiting.id);
+  await service.changeStatus(tech, tiWaiting.id, { status: 'AGUARDANDO', waitingReason: 'PECA' });
+  const eletrica = await teamTicket(eletricaTeam, `${marker} tomada queimada`);
+  for (const filter of queueFilters) {
+    const result = await service.listTickets(eletricista, filter, 1, { q: marker });
+    assert.ok(
+      !result.tickets.some((t) => t.teamId === tiTeam),
+      `eletricista vê chamado da TI em ${filter}`,
+    );
+    const asTech = await service.listTickets(tech, filter, 1, { q: marker, teamId: eletricaTeam });
+    assert.ok(
+      !asTech.tickets.some((t) => t.id === eletrica.id),
+      `técnico da TI vê chamado da Elétrica em ${filter}`,
+    );
+  }
+  assert.deepEqual(
+    (await service.listTickets(eletricista, 'todos', 1, { q: marker })).tickets.map((t) => t.id),
+    [eletrica.id],
+  );
+  assert.equal((await service.listTickets(tech, 'todos', 1, { q: marker })).total, 2);
+  for (const ticket of [tiNew, tiWaiting]) {
+    await assert.rejects(service.getTicket(eletricista, ticket.id), notFound);
+    await assert.rejects(service.addComment(eletricista, ticket.id, 'Intrusão'), notFound);
+    await assert.rejects(
+      service.classifyTicket(eletricista, ticket.id, { categoryId: null, complexity: 'BAIXA' }),
+      notFound,
+    );
+    await assert.rejects(
+      service.relocateTicket(eletricista, ticket.id, { companyId: primaryCompanyId }),
+      notFound,
+    );
+  }
+  assert.equal(await db.ticketComment.count({ where: { ticketId: tiNew.id } }), 0);
+  assert.equal((await db.ticket.findUniqueOrThrow({ where: { id: tiNew.id } })).complexity, null);
+  const byTeam = await service.listTickets(admin, 'todos', 1, { q: marker, teamId: eletricaTeam });
+  assert.deepEqual(
+    byTeam.tickets.map((t) => t.id),
+    [eletrica.id],
+  );
+  assert.equal((await service.listTickets(admin, 'todos', 1, { q: marker })).total, 3);
+  const detail = await service.getTicket(eletricista, eletrica.id);
+  assert.deepEqual(detail.team, { id: eletricaTeam, key: 'ELETRICA', name: 'Elétrica' });
+});
+test('busca por número não revela chamado de outra equipe', async () => {
+  const ticket = await teamTicket(tiTeam, 'Monitor sem imagem.');
+  const q = ticketNumber(ticket.number);
+  assert.equal((await service.listTickets(eletricista, 'todos', 1, { q })).total, 0);
+  assert.equal((await service.listTickets(eletricista, 'novos', 1, { q })).total, 0);
+  assert.equal((await service.listTickets(tech, 'todos', 1, { q })).total, 1);
+});
+test('ajudante de outra equipe vê e comenta só o chamado em que está, e perde acesso ao sair', async () => {
+  const ticket = await teamTicket(tiTeam, 'Quadro elétrico da sala de servidores.');
+  const otherTicket = await teamTicket(tiTeam, 'Outro chamado da TI.');
+  await service.claimTicket(tech, ticket.id);
+  await service.setSupport(tech, ticket.id, eletricista, true);
+  assert.equal((await service.getTicket(eletricista, ticket.id)).id, ticket.id);
+  for (const filter of ['apoio', 'meus'])
+    assert.ok(
+      (await service.listTickets(eletricista, filter)).tickets.some((t) => t.id === ticket.id),
+      filter,
+    );
+  await service.addComment(eletricista, ticket.id, 'Disjuntor verificado.');
+  await assert.rejects(service.getTicket(eletricista, otherTicket.id), notFound);
+  await assert.rejects(service.getTicket(eletricista2, ticket.id), notFound);
+  await service.setSupport(tech, ticket.id, eletricista, false);
+  await assert.rejects(service.getTicket(eletricista, ticket.id), notFound);
+  await assert.rejects(service.addComment(eletricista, ticket.id, 'Depois de sair'), notFound);
+  for (const filter of ['apoio', 'meus'])
+    assert.ok(
+      !(await service.listTickets(eletricista, filter)).tickets.some((t) => t.id === ticket.id),
+      filter,
+    );
+});
+test('assumir e transferir só dentro da equipe do chamado', async () => {
+  const ticket = await teamTicket(tiTeam, 'Computador do caixa travado.');
+  await assert.rejects(service.claimTicket(eletricista, ticket.id));
+  assert.equal((await db.ticket.findUniqueOrThrow({ where: { id: ticket.id } })).status, 'NOVO');
+  await service.claimTicket(tech, ticket.id);
+  await assert.rejects(
+    service.assignTicket(tech, ticket.id, eletricista),
+    /Selecione um técnico ativo da equipe do chamado/,
+  );
+  await service.assignTicket(tech, ticket.id, tech2);
+  await service.assignTicket(tech2, ticket.id, admin);
+  const final = await db.ticket.findUniqueOrThrow({ where: { id: ticket.id } });
+  assert.equal(final.assigneeId, admin);
+  const eletrica = await teamTicket(eletricaTeam, 'Lâmpada piscando.');
+  await assert.rejects(service.claimTicket(tech, eletrica.id));
+  await service.claimTicket(eletricista, eletrica.id);
+  await service.assignTicket(eletricista, eletrica.id, eletricista2);
 });

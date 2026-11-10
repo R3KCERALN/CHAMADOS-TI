@@ -23,6 +23,7 @@ type TicketSummary = {
   company?: { displayName: string } | null;
   unit?: { name: string } | null;
   department: { name: string } | null;
+  team?: { name: string } | null;
   assignee: { name: string } | null;
 };
 export function TicketList({
@@ -56,6 +57,7 @@ export function TicketList({
             <div className="ticket-eyebrow">
               <span>{ticketNumber(ticket.number)}</span>
               <span>{ticket.department?.name || 'Sem setor'}</span>
+              {ticket.team && <span className="team-label">Equipe {ticket.team.name}</span>}
               {ticket.impact === 'BLOQUEADO' && (
                 <span className="blocked-label">Trabalho bloqueado</span>
               )}

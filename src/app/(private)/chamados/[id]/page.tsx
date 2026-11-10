@@ -63,19 +63,37 @@ export default async function TicketPage({
   const companies = tech ? await locationOptions(user.id) : [];
   const manage = user.role === 'ADMIN' || (user.role === 'TI' && ticket.assigneeId === user.id);
   const editable = manage && !!ticket.assigneeId && ticket.status !== 'RESOLVIDO';
-  const technicians = editable
-    ? await db.user.findMany({
-        where: {
-          organizationId: user.organizationId,
-          role: 'TI',
-          active: true,
-          id: { not: ticket.assigneeId! },
-        },
-        select: { id: true, name: true },
-        orderBy: { name: 'asc' },
-      })
-    : [];
-  const available = technicians.filter((t) => !ticket.participants.some((p) => p.userId === t.id));
+  // Only the ticket's team (or an ADMIN) can claim; a support technician of the other team cannot.
+  const canClaim = user.role === 'ADMIN' || (user.role === 'TI' && user.teamId === ticket.teamId);
+  const [technicians, supportCandidates] = editable
+    ? await Promise.all([
+        // Principal: an ADMIN or a technician of the ticket's team.
+        db.user.findMany({
+          where: {
+            organizationId: user.organizationId,
+            active: true,
+            id: { not: ticket.assigneeId! },
+            OR: [{ role: 'ADMIN' }, { role: 'TI', teamId: ticket.teamId }],
+          },
+          select: { id: true, name: true },
+          orderBy: { name: 'asc' },
+        }),
+        // Support: any active technician of the organization, from either team.
+        db.user.findMany({
+          where: {
+            organizationId: user.organizationId,
+            role: 'TI',
+            active: true,
+            id: { not: ticket.assigneeId! },
+          },
+          select: { id: true, name: true, team: { select: { name: true } } },
+          orderBy: { name: 'asc' },
+        }),
+      ])
+    : [[], []];
+  const available = supportCandidates.filter(
+    (t) => !ticket.participants.some((p) => p.userId === t.id),
+  );
   const created = search.criado;
   const categories = tech
     ? await db.category.findMany({
@@ -98,7 +116,8 @@ export default async function TicketPage({
         <div>
           <span className="eyebrow">
             {ticketNumber(ticket.number)} <span className="separator">/</span>{' '}
-            {ticket.origin === 'ATENDIMENTO_RAPIDO' ? 'ATENDIMENTO RÁPIDO' : 'CHAMADO'}
+            {ticket.origin === 'ATENDIMENTO_RAPIDO' ? 'ATENDIMENTO RÁPIDO' : 'CHAMADO'}{' '}
+            <span className="separator">/</span> EQUIPE {ticket.team.name.toUpperCase()}
           </span>
           <h1>Detalhes do atendimento</h1>
           <p>Aberto em {formatDate(ticket.createdAt)}</p>
@@ -140,13 +159,13 @@ export default async function TicketPage({
               </p>
             )}
           </section>
-          {tech && (ticket.status === 'NOVO' || editable) && (
+          {tech && ((ticket.status === 'NOVO' && canClaim) || editable) && (
             <section className="panel padded primary-actions">
               <div className="section-title">
                 <ArrowRightLeft size={19} />
                 <h2>Próximo passo</h2>
               </div>
-              {ticket.status === 'NOVO' && (
+              {ticket.status === 'NOVO' && canClaim && (
                 <ActionForm action={ticketAction}>
                   <Hidden id={id} intent="claim" />
                   <Submit>Assumir chamado</Submit>
@@ -366,6 +385,10 @@ export default async function TicketPage({
                 {ticket.company && <small>CNPJ {formatCnpj(ticket.company.cnpj)}</small>}
               </div>
               <div>
+                <span>Equipe</span>
+                <strong>{ticket.team.name}</strong>
+              </div>
+              <div>
                 <span>Registrado por</span>
                 <strong>{ticket.openedByUser?.name || 'Não registrado (legado)'}</strong>
               </div>
@@ -486,7 +509,7 @@ export default async function TicketPage({
                     </option>
                     {available.map((t) => (
                       <option key={t.id} value={t.id}>
-                        {t.name}
+                        {t.team ? `${t.name} · ${t.team.name}` : t.name}
                       </option>
                     ))}
                   </select>
