@@ -3,12 +3,17 @@ import { notFound } from 'next/navigation';
 import { ArrowLeft, Zap } from 'lucide-react';
 import { requireUser } from '@/lib/auth';
 import { locationOptions } from '@/lib/organization-service';
+import { teamOptions } from '@/lib/teams';
+import { db } from '@/lib/db';
 import { TicketForm } from '@/components/ticket-form';
 import { RequesterPicker } from '@/components/requester-picker';
 export default async function QuickPage() {
   const user = await requireUser();
   if (!['TI', 'ADMIN'].includes(user.role)) notFound();
-  const companies = await locationOptions(user.id);
+  const [companies, teams] = await Promise.all([
+    locationOptions(user.id),
+    user.role === 'ADMIN' ? teamOptions(db, user.organizationId) : [],
+  ]);
   return (
     <div className="narrow">
       <Link className="back-link" href="/">
@@ -25,7 +30,7 @@ export default async function QuickPage() {
         </div>
       </div>
       <section className="panel padded">
-        <TicketForm quick>
+        <TicketForm quick teams={teams}>
           <RequesterPicker companies={companies} />
         </TicketForm>
       </section>

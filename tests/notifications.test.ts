@@ -15,7 +15,7 @@ import { syntheticCnpj, teamId } from './fixtures';
 import type { Role } from '../src/generated/prisma/client';
 const org = APP_ORGANIZATION_ID;
 let employee: string, tech: string, support: string, other: string, admin: string, foreign: string;
-let company: string, department: string, hash: string;
+let company: string, department: string, hash: string, tiTeam: string;
 const sessions = new Map<string, string>();
 const password = process.env.TEST_PASSWORD!;
 function subscription() {
@@ -58,6 +58,7 @@ const open = () =>
   service.createTicket(employee, {
     description: 'Problema confidencial não deve aparecer no push',
     impact: 'PARCIAL',
+    teamId: tiTeam,
   });
 async function makeDue() {
   await db.pushDelivery.updateMany({
@@ -77,6 +78,7 @@ async function recipients(ticketId: string, type: string) {
 }
 before(async () => {
   assert.match(new URL(process.env.DATABASE_URL!).pathname, /^\/central_test_/);
+  tiTeam = await teamId(org, 'TI');
   company = (
     await db.company.create({
       data: { organizationId: org, displayName: 'Filial Push', cnpj: syntheticCnpj() },
@@ -151,6 +153,7 @@ test('novo chamado normal notifica TI ativos; autor, ADMIN e outra Organization 
   const own = await service.createTicket(tech, {
     description: 'Solicitação do próprio TI',
     impact: 'BAIXO',
+    teamId: tiTeam,
     companyId: company,
   });
   assert.deepEqual(await recipients(own.id, 'CRIADO'), [support]);

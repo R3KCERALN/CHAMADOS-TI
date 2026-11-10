@@ -25,7 +25,7 @@ let admin: string,
   departmentId: string,
   primaryCompanyId: string;
 const organizationId = APP_ORGANIZATION_ID;
-let hash: string;
+let hash: string, tiTeam: string;
 async function makeUser(role: Role, options = {}) {
   return db.user.create({
     data: {
@@ -44,6 +44,7 @@ async function makeUser(role: Role, options = {}) {
 }
 before(async () => {
   assert.match(new URL(process.env.DATABASE_URL!).pathname, /^\/central_test_\d+_[a-f0-9]{8}$/);
+  tiTeam = await teamId(organizationId, 'TI');
   primaryCompanyId = (
     await db.company.create({
       data: {
@@ -67,6 +68,7 @@ const newTicket = () =>
   service.createTicket(employee, {
     description: 'Meu computador não inicia.',
     impact: 'BLOQUEADO',
+    teamId: tiTeam,
   });
 test('login válido cria sessão server-side, guarda somente hash do token e logout revoga', async () => {
   const user = await db.user.findUniqueOrThrow({ where: { id: employee } });
@@ -366,6 +368,7 @@ test('desativar preserva histórico e impede novos atendimentos para o usuário'
   const ticket = await service.createTicket(user.id, {
     description: 'Preservar este registro.',
     impact: 'PARCIAL',
+    teamId: tiTeam,
   });
   await service.updateUser(admin, user.id, {
     name: user.name,
@@ -634,4 +637,37 @@ test('redefinição de senha pelo ADMIN libera a troca de senha bloqueada', asyn
   await service.resetPassword(admin, user.id, 'Temporaria123');
   await changePassword(user.id, 'Temporaria123', 'NovaSenha123');
   assert.equal((await login(user.username, 'NovaSenha123')).mustChangePassword, false);
+});
+test('abertura comum exige equipe e grava a escolhida', async () => {
+  const input = { description: 'Tomada sem energia na bancada.', impact: 'BAIXO' };
+  await assert.rejects(service.createTicket(employee, input), /Selecione a equipe/);
+  const eletrica = await teamId(organizationId, 'ELETRICA');
+  const ticket = await service.createTicket(employee, { ...input, teamId: eletrica });
+  assert.equal(ticket.teamId, eletrica);
+  const foreignOrg = await db.organization.create({ data: { name: 'Equipes alheias' } });
+  await assert.rejects(
+    service.createTicket(employee, { ...input, teamId: await teamId(foreignOrg.id, 'TI') }),
+    /Selecione a equipe/,
+  );
+});
+test('atendimento rápido usa a equipe de quem registra; ADMIN escolhe', async () => {
+  const eletrica = await teamId(organizationId, 'ELETRICA');
+  const ti = await teamId(organizationId, 'TI');
+  const electrician = await makeUser('TI', { teamId: eletrica });
+  const input = { description: 'Disjuntor desarmando.', impact: 'BAIXO' as const };
+  const byElectrician = await service.createTicket(
+    electrician.id,
+    { ...input, teamId: ti },
+    employee,
+  );
+  assert.equal(byElectrician.teamId, eletrica);
+  await assert.rejects(service.createTicket(admin, input, employee), /Selecione a equipe/);
+  const before = await db.ticket.count();
+  await assert.rejects(
+    service.createTicket(admin, { ...input, teamId: 'equipe-inexistente' }, employee),
+    /Selecione a equipe/,
+  );
+  assert.equal(await db.ticket.count(), before);
+  const byAdmin = await service.createTicket(admin, { ...input, teamId: ti }, employee);
+  assert.equal(byAdmin.teamId, ti);
 });

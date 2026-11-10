@@ -32,8 +32,10 @@ let admin: string,
   primaryCompanyId: string;
 const organizationId = APP_ORGANIZATION_ID;
 const id = () => randomBytes(8).toString('hex');
+let tiTeam: string;
 before(async () => {
   assert.match(new URL(process.env.DATABASE_URL!).pathname, /^\/central_test_/);
+  tiTeam = await teamId(organizationId, 'TI');
   primaryCompanyId = (
     await db.company.create({
       data: {
@@ -77,6 +79,7 @@ async function fixture(options: { transfer?: boolean; support?: boolean; pending
     data: {
       description: 'Atendimento de teste com períodos conhecidos.',
       organizationId,
+      teamId: await teamId(organizationId, 'TI'),
       requesterName: 'Pessoa histórica',
       requesterId: employee,
       departmentId: department,
@@ -152,10 +155,11 @@ test('senha/PIN de seis funciona em criação, reset e troca obrigatória com Ar
   await assert.rejects(changePassword(user.id, '456789', '12345'));
 });
 test('TI atribui categoria e complexidade com eventos; funcionário não classifica', async () => {
-  const category = await saveCategory(admin, { name: `Categoria ${id()}` });
+  const category = await saveCategory(admin, { name: `Categoria ${id()}`, teamId: tiTeam });
   const ticket = await createTicket(employee, {
     description: 'Preciso configurar uma impressora.',
     impact: 'BAIXO',
+    teamId: tiTeam,
   });
   await assert.rejects(
     classifyTicket(employee, ticket.id, { categoryId: category.id, complexity: 'ALTA' }),
@@ -172,6 +176,7 @@ test('TI atribui categoria e complexidade com eventos; funcionário não classif
   const next = await createTicket(employee, {
     description: 'Outra configuração.',
     impact: 'BAIXO',
+    teamId: tiTeam,
   });
   await assert.rejects(
     classifyTicket(tech, next.id, { categoryId: category.id, complexity: 'BAIXA' }),
@@ -290,6 +295,7 @@ test('mediana PostgreSQL não é distorcida por um único ciclo muito longo', as
       data: {
         description: 'Ciclo para teste de mediana.',
         organizationId,
+        teamId: await teamId(organizationId, 'TI'),
         requesterName: 'Pessoa histórica',
         requesterId: employee,
         departmentId: dept,
@@ -335,6 +341,7 @@ test('filtros da fila consultam número, descrição e solicitante no servidor',
   const t = await createTicket(employee, {
     description: `Busca específica ${id()}`,
     impact: 'BLOQUEADO',
+    teamId: tiTeam,
   });
   const result = await listTickets(tech, 'todos', 1, { q: `CS-${t.number}`, impact: 'BLOQUEADO' });
   assert.equal(result.total, 1);
@@ -348,6 +355,7 @@ test('timeline e comentários são paginados no servidor', async () => {
   const t = await createTicket(employee, {
     description: 'Paginação de auditoria.',
     impact: 'BAIXO',
+    teamId: tiTeam,
   });
   await db.ticketEvent.createMany({
     data: Array.from({ length: 35 }, () => ({
@@ -387,7 +395,7 @@ test('espera recortada ao período mantém apenas a interseção e a idade mant�
 });
 test('filtros combinados e paginação CSV por chave não duplicam chamados', async () => {
   const { filters, ticket } = await fixture();
-  const category = await saveCategory(admin, { name: `Exportação ${id()}` });
+  const category = await saveCategory(admin, { name: `Exportação ${id()}`, teamId: tiTeam });
   await classifyTicket(tech, ticket.id, { categoryId: category.id, complexity: 'CRITICA' });
   const combined = {
     ...filters,
@@ -407,6 +415,7 @@ test('fluxo real de atendimento gera tempos confiáveis até a resolução', asy
   const ticket = await createTicket(employee, {
     description: 'Validar relógios no fluxo real.',
     impact: 'BAIXO',
+    teamId: tiTeam,
   });
   await claimTicket(tech, ticket.id);
   await changeStatus(tech, ticket.id, { status: 'AGUARDANDO', waitingReason: 'USUARIO' });
@@ -455,7 +464,13 @@ test('fila de novos mostra o mais antigo primeiro; demais filas e funcionário, 
   const marker = `Ordem da fila ${id()}`;
   const created = [];
   for (const n of [1, 2, 3])
-    created.push(await createTicket(employee, { description: `${marker} #${n}`, impact: 'BAIXO' }));
+    created.push(
+      await createTicket(employee, {
+        description: `${marker} #${n}`,
+        impact: 'BAIXO',
+        teamId: tiTeam,
+      }),
+    );
   const ids = created.map((t) => t.id);
   const order = async (user: string, filter: string) =>
     (await listTickets(user, filter, 1, { q: marker })).tickets.map((t) => t.id);
@@ -465,5 +480,32 @@ test('fila de novos mostra o mais antigo primeiro; demais filas e funcionário, 
   assert.deepEqual(
     (await order(employee, 'novos')).filter((x) => ids.includes(x)),
     [...ids].reverse(),
+  );
+});
+test('categoria pertence a uma equipe e só classifica chamados dessa equipe', async () => {
+  const eletrica = await teamId(organizationId, 'ELETRICA');
+  const ti = await teamId(organizationId, 'TI');
+  const name = `Fiação ${id()}`;
+  const electrical = await saveCategory(admin, { name, teamId: eletrica });
+  assert.equal(electrical.teamId, eletrica);
+  const sameName = await saveCategory(admin, { name, teamId: ti });
+  assert.equal(sameName.teamId, ti);
+  await assert.rejects(saveCategory(admin, { name }), /Selecione a equipe/);
+  await assert.rejects(saveCategory(admin, { name, teamId: eletrica }), /Category_teamId_name/);
+  const renamed = await saveCategory(admin, { id: electrical.id, name: `${name} 2`, teamId: ti });
+  assert.equal(renamed.teamId, eletrica);
+  const ticket = await createTicket(employee, {
+    description: 'Computador sem rede.',
+    impact: 'BAIXO',
+    teamId: ti,
+  });
+  await assert.rejects(
+    classifyTicket(tech, ticket.id, { categoryId: electrical.id, complexity: null }),
+    /Selecione uma categoria ativa/,
+  );
+  await classifyTicket(tech, ticket.id, { categoryId: sameName.id, complexity: null });
+  assert.equal(
+    (await db.ticket.findUniqueOrThrow({ where: { id: ticket.id } })).categoryId,
+    sameName.id,
   );
 });

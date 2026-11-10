@@ -11,6 +11,7 @@ export const publicUserSelect = {
   username: true,
   departmentId: true,
   organizationId: true,
+  teamId: true,
   organization: { select: { id: true, name: true, active: true } },
   primaryCompanyId: true,
   primaryUnitId: true,

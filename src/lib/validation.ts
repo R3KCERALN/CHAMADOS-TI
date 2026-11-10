@@ -26,6 +26,7 @@ export const ticketSchema = z.object({
   unitId: z.string().max(100).nullable().optional(),
   requesterName: z.string().trim().min(1, 'Informe quem pediu o atendimento.').max(150).optional(),
   quick: z.boolean().optional(),
+  teamId: z.string().max(100).optional(),
   description: z
     .string()
     .trim()

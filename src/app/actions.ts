@@ -168,6 +168,7 @@ export async function createTicketAction(_: FormState, form: FormData): Promise<
         unitId: value(form, 'unitId') || null,
         requesterName: value(form, 'requesterName') || undefined,
         quick: value(form, 'quick') === 'true',
+        teamId: value(form, 'teamId') || undefined,
       },
       value(form, 'requesterId') || undefined,
     );
@@ -234,6 +235,7 @@ export async function categoryAction(_: FormState, form: FormData): Promise<Form
     await service.saveCategory(user.id, {
       id: value(form, 'id') || undefined,
       name: value(form, 'name'),
+      teamId: value(form, 'teamId') || undefined,
       active: value(form, 'active') !== 'false',
     });
     revalidatePath('/', 'layout');

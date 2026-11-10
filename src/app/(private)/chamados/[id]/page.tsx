@@ -81,6 +81,7 @@ export default async function TicketPage({
     ? await db.category.findMany({
         where: {
           organizationId: user.organizationId,
+          teamId: ticket.teamId,
           OR: [{ active: true }, ...(ticket.categoryId ? [{ id: ticket.categoryId }] : [])],
         },
         orderBy: { name: 'asc' },

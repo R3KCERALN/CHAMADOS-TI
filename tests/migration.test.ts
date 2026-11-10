@@ -112,3 +112,70 @@ test('migration de equipes cria TI/Elétrica por organização e coloca técnico
     await client.end();
   }
 });
+test('migration de chamados põe legado e categorias na TI e exige equipe', async () => {
+  assert.match(new URL(process.env.DATABASE_URL!).pathname, /^\/central_test_/);
+  const client = new Client({ connectionString: process.env.DATABASE_URL });
+  await client.connect();
+  const schema = 'migration_fixture_' + randomBytes(6).toString('hex');
+  try {
+    await client.query(`CREATE SCHEMA "${schema}"`);
+    await client.query(`SET search_path TO "${schema}"`);
+    const directories = (await readdir('prisma/migrations')).filter((n) => /^\d/.test(n)).sort();
+    const boundary = directories.indexOf('202611100002_ticket_teams');
+    assert.ok(boundary >= 0);
+    for (const name of directories.slice(0, boundary))
+      await client.query(await readFile(`prisma/migrations/${name}/migration.sql`, 'utf8'));
+    await client.query(`INSERT INTO "Department"(id,name,"organizationId") VALUES ('legacy-dept','Legado','initial-organization');
+      INSERT INTO "Category"(id,name,"organizationId") VALUES ('legacy-category','Rede','initial-organization');
+      INSERT INTO "Ticket"(id,description,impact,"requesterName","organizationId","departmentId","updatedAt") VALUES ('legacy-ticket','Registro existente antes das equipes.','BAIXO','Maria Antiga','initial-organization','legacy-dept',CURRENT_TIMESTAMP);`);
+    for (const name of directories.slice(boundary))
+      await client.query(await readFile(`prisma/migrations/${name}/migration.sql`, 'utf8'));
+    const ticket = (
+      await client.query(
+        'SELECT t.key FROM "Ticket" k JOIN "Team" t ON t.id=k."teamId" WHERE k.id=$1',
+        ['legacy-ticket'],
+      )
+    ).rows[0];
+    const category = (
+      await client.query(
+        'SELECT t.key FROM "Category" c JOIN "Team" t ON t.id=c."teamId" WHERE c.id=$1',
+        ['legacy-category'],
+      )
+    ).rows[0];
+    assert.equal(ticket.key, 'TI');
+    assert.equal(category.key, 'TI');
+    await assert.rejects(
+      client.query(`UPDATE "Ticket" SET "teamId"=NULL WHERE id='legacy-ticket'`),
+      /null value/,
+    );
+    const electrical = (
+      await client.query(
+        `SELECT id FROM "Team" WHERE "organizationId"='initial-organization' AND key='ELETRICA'`,
+      )
+    ).rows[0].id;
+    await client.query(
+      `INSERT INTO "Category"(id,name,"organizationId","teamId") VALUES ('eletrica-category','Rede','initial-organization',$1)`,
+      [electrical],
+    );
+    await assert.rejects(
+      client.query(`UPDATE "Ticket" SET "categoryId"='eletrica-category' WHERE id='legacy-ticket'`),
+      /Team\/category mismatch/,
+    );
+    await assert.rejects(
+      client.query(`UPDATE "Category" SET "teamId"=$1 WHERE id='legacy-category'`, [electrical]),
+      /Category team is immutable/,
+    );
+    await assert.rejects(
+      client.query(
+        `INSERT INTO "Category"(id,name,"organizationId","teamId") VALUES ('duplicada','rede ','initial-organization',$1)`,
+        [electrical],
+      ),
+      /Category_teamId_name_normalized_key/,
+    );
+  } finally {
+    await client.query('ROLLBACK');
+    await client.query('SET search_path TO public');
+    await client.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);
+    await client.end();
+  }
+});

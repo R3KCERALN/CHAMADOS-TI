@@ -38,6 +38,7 @@ export const eventLabels = {
   CATEGORIA_ALTERADA: 'Categoria técnica alterada',
   LOCALIZACAO_ALTERADA: 'Localização corrigida',
   COMPLEXIDADE_ALTERADA: 'Complexidade alterada',
+  EQUIPE_ALTERADA: 'Equipe alterada',
 };
 export const formatDate = (date: Date) =>
   new Intl.DateTimeFormat('pt-BR', {

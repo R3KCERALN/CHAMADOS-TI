@@ -48,6 +48,7 @@ enum EventType {
   CATEGORIA_ALTERADA
   COMPLEXIDADE_ALTERADA
   LOCALIZACAO_ALTERADA
+  EQUIPE_ALTERADA
 }
 enum Complexity {
   BAIXA
@@ -59,13 +60,16 @@ model Category {
   organizationId String
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
   id        String @id @default(cuid())
+  teamId    String
+  team      Team @relation(fields: [teamId], references: [id], onDelete: Restrict)
   name      String
   active    Boolean @default(true)
   createdAt DateTime @default(now())
   tickets   Ticket[]
   previousEvents TicketEvent[] @relation("PreviousCategory")
   nextEvents TicketEvent[] @relation("NextCategory")
-  @@unique([organizationId, name])
+  @@unique([teamId, name])
+  @@index([teamId])
 }
 model Department {
   organizationId String
@@ -150,6 +154,8 @@ model Ticket {
   unit Unit? @relation(fields: [unitId], references: [id], onDelete: Restrict)
   openedByUserId String?
   openedByUser User? @relation("OpenedBy", fields: [openedByUserId], references: [id], onDelete: Restrict)
+  teamId String
+  team Team @relation(fields: [teamId], references: [id], onDelete: Restrict)
   requesterName String
   requesterId     String?
   requester       User? @relation("Requester", fields: [requesterId], references: [id], onDelete: Restrict)
@@ -172,6 +178,8 @@ model Ticket {
   @@index([organizationId, createdAt])
   @@index([organizationId, resolvedAt])
   @@index([organizationId, status])
+  @@index([teamId, status])
+  @@index([teamId, createdAt])
   @@index([companyId, createdAt])
   @@index([unitId, createdAt])
   @@index([openedByUserId])
@@ -275,6 +283,8 @@ model Team {
   active Boolean @default(true)
   createdAt DateTime @default(now())
   users User[]
+  tickets Ticket[]
+  categories Category[]
   @@unique([organizationId, key])
 }
 model Company {

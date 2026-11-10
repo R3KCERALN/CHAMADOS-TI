@@ -232,12 +232,17 @@ export async function createTicket(actorId: string, input: unknown, requesterId?
       { ...data, unitId: requester ? data.unitId : data.unitId || null },
       requester || undefined,
     );
+    const team =
+      quick && user.role === 'TI'
+        ? await requireTeam(tx, user.organizationId, user.teamId)
+        : await requireTeam(tx, user.organizationId, data.teamId);
     const occurredAt = new Date();
     const ticket = await tx.ticket.create({
       data: {
         description: data.description,
         impact: data.impact,
         organizationId: user.organizationId,
+        teamId: team.id,
         ...location,
         openedByUserId: user.id,
         requesterId: requester?.id || null,
@@ -598,6 +603,7 @@ export async function saveCategory(actorId: string, input: unknown) {
     .object({
       id: z.string().optional(),
       name: z.string().trim().min(2).max(100),
+      teamId: z.string().max(100).optional(),
       active: z.boolean().default(true),
     })
     .parse(input);
@@ -615,8 +621,14 @@ export async function saveCategory(actorId: string, input: unknown) {
         where: { id: data.id },
         data: { name: data.name, active: data.active },
       });
+    const team = await requireTeam(tx, admin.organizationId, data.teamId);
     return tx.category.create({
-      data: { name: data.name, active: data.active, organizationId: admin.organizationId },
+      data: {
+        name: data.name,
+        active: data.active,
+        organizationId: admin.organizationId,
+        teamId: team.id,
+      },
     });
   });
 }
@@ -634,7 +646,12 @@ export async function classifyTicket(actorId: string, ticketId: string, input: u
       data.categoryId &&
       data.categoryId !== ticket.categoryId &&
       !(await tx.category.findFirst({
-        where: { id: data.categoryId, active: true, organizationId: user.organizationId },
+        where: {
+          id: data.categoryId,
+          active: true,
+          organizationId: user.organizationId,
+          teamId: ticket.teamId,
+        },
       }))
     )
       throw new AppError('Selecione uma categoria ativa.');
