@@ -373,8 +373,8 @@ test('cenário completo no navegador: admin, funcionário, TI, histórico e aten
   expect(pdf.status()).toBe(200);
   expect(pdf.headers()['content-type']).toContain('application/pdf');
   expect((await pdf.body()).subarray(0, 5).toString()).toBe('%PDF-');
-  await page.getByRole('link', { name: 'Equipe de TI', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'Equipe de TI', exact: true })).toBeVisible();
+  await page.getByRole('link', { name: 'Equipe técnica', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Equipe técnica', exact: true })).toBeVisible();
   await page.getByRole('link', { name: 'Bruno Técnico', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Bruno Técnico', exact: true })).toBeVisible();
   await expect(page.getByText('Participou como apoio', { exact: true })).toBeVisible();

@@ -231,6 +231,36 @@ test('troca de equipe é bloqueada enquanto o técnico for responsável por cham
   assert.equal(metadata.before.teamId, technician.teamId);
   assert.equal(metadata.after.teamId, eletrica);
 });
+test('rebaixar ADMIN para técnico é bloqueado enquanto ele for responsável por chamado de outra equipe', async () => {
+  const target = await makeUser('ADMIN');
+  const tiTicket = await newTicket();
+  const eletricaTicket = await service.createTicket(employee, {
+    description: 'Tomada sem energia.',
+    impact: 'PARCIAL',
+    teamId: eletricaTeam,
+  });
+  await service.claimTicket(target.id, tiTicket.id);
+  await service.claimTicket(target.id, eletricaTicket.id);
+  const demote = () =>
+    service.updateUser(admin, target.id, {
+      name: target.name,
+      username: target.username,
+      primaryCompanyId,
+      departmentId,
+      role: 'TI',
+      teamId: tiTeam,
+      active: true,
+    });
+  await assert.rejects(demote(), /Transfira os 1 chamado\(s\)/);
+  const unchanged = await db.user.findUniqueOrThrow({ where: { id: target.id } });
+  assert.equal(unchanged.role, 'ADMIN');
+  assert.equal(unchanged.teamId, null);
+  await service.changeStatus(target.id, eletricaTicket.id, { status: 'RESOLVIDO', note: 'Feito.' });
+  await demote();
+  const demoted = await db.user.findUniqueOrThrow({ where: { id: target.id } });
+  assert.equal(demoted.role, 'TI');
+  assert.equal(demoted.teamId, tiTeam);
+});
 test('rebaixar técnico para funcionário limpa a equipe', async () => {
   const technician = await makeUser('TI');
   assert.ok(technician.teamId);

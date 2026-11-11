@@ -77,7 +77,7 @@ export default async function ManagementPage({
             {labels.companies}
           </Link>
           <Link href={`/gestor/equipe?${queryString(params)}`} className="button secondary">
-            Equipe de TI
+            Equipe técnica
           </Link>
           <a href={`/gestor/exportar?${queryString(params)}`} className="button primary">
             Exportar CSV

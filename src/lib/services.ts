@@ -116,9 +116,9 @@ export async function updateUser(actorId: string, userId: string, input: unknown
       throw new AppError('Setor inválido.');
     const teamId =
       data.role === 'TI' ? (await requireTeam(tx, admin.organizationId, data.teamId)).id : null;
-    if (before.role === 'TI' && before.teamId !== teamId && teamId) {
+    if (teamId) {
       const open = await tx.ticket.count({
-        where: { assigneeId: userId, status: { not: 'RESOLVIDO' } },
+        where: { assigneeId: userId, status: { not: 'RESOLVIDO' }, teamId: { not: teamId } },
       });
       if (open > 0)
         throw new AppError(

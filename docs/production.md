@@ -46,6 +46,8 @@ Nunca executar `demo:setup`, seed fictício, migrate reset ou `down -v` nesta in
 
 Antes de atualizar: execute backup, confirme seu armazenamento e compatibilidade das migrations com a versão antiga. Preserve `.env.production`, projeto, volumes e VAPID. Atualize checkout sem apagar migrations, escolha um novo `RELEASE`, execute `./ops/deploy.sh` e valide login/chamado/health. Migrations incompatíveis exigem janela de manutenção: pare app/proxy antes de aplicá-las. Nunca inicie duas versões com migrations incompatíveis no mesmo banco.
 
+A partir da migration `202611100002`, voltar apenas a imagem da aplicação não é compatível: a imagem anterior não abre chamados, não cria categorias nem técnicos, por causa do `teamId` NOT NULL e do CHECK de equipe do técnico. Corrija para frente (nova versão), sem desfazer migrations.
+
 Migrations isoladas (aplicação deve ser compatível ou estar parada):
 
 ```bash

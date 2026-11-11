@@ -31,7 +31,7 @@ export default async function TeamPage({ searchParams }: { searchParams: Promise
       <div className="page-heading">
         <div>
           <span className="eyebrow">GESTÃO · EQUIPE</span>
-          <h1>Equipe de TI</h1>
+          <h1>Equipe técnica</h1>
           <p>Responsabilidades, apoios e carga atual. Sem pontuação ou comparação competitiva.</p>
         </div>
         <PdfLink screen="equipe" params={params} />

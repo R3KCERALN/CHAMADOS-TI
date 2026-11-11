@@ -39,7 +39,7 @@ export default async function TechnicianPage({
         className="back-link"
         href={`/gestor/equipe?${queryString(search, { pagina: '', technician: '' })}`}
       >
-        ← Equipe de TI
+        ← Equipe técnica
       </Link>
       <div className="page-heading">
         <div>
