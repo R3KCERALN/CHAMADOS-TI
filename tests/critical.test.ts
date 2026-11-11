@@ -876,3 +876,27 @@ test('após mover, só a nova equipe assume; mudanças concorrentes geram um ún
     assert.deepEqual(await eventTypes(raced.id), ['CRIADO', 'EQUIPE_ALTERADA'], `rodada ${round}`);
   }
 });
+test('quem era apoio e assume o chamado movido deixa de ser apoio, com evento', async () => {
+  const ticket = await teamTicket(tiTeam, 'Fiação do switch esquentando.');
+  await service.claimTicket(tech, ticket.id);
+  await service.setSupport(tech, ticket.id, eletricista, true);
+  await service.moveTicketTeam(tech, ticket.id, eletricaTeam);
+  await service.claimTicket(eletricista, ticket.id);
+  assert.equal(await db.ticketParticipant.count({ where: { ticketId: ticket.id } }), 0);
+  assert.deepEqual(await eventTypes(ticket.id), [
+    'CRIADO',
+    'ASSUMIDO',
+    'APOIO_ADICIONADO',
+    'EQUIPE_ALTERADA',
+    'APOIO_REMOVIDO',
+    'ASSUMIDO',
+  ]);
+  const removed = await db.ticketEvent.findFirstOrThrow({
+    where: { ticketId: ticket.id, type: 'APOIO_REMOVIDO' },
+  });
+  assert.equal(removed.actorId, eletricista);
+  assert.equal(removed.targetUserId, eletricista);
+  assert.ok(
+    !(await service.listTickets(eletricista, 'apoio')).tickets.some((t) => t.id === ticket.id),
+  );
+});

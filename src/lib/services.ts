@@ -476,6 +476,19 @@ export async function claimTicket(actorId: string, ticketId: string) {
     });
     if (result.count !== 1)
       throw new AppError('Este chamado já foi assumido por outro técnico. Atualize a página.', 409);
+    // A ticket moved to another team keeps its supports; the principal is never also support.
+    const removed = await tx.ticketParticipant.deleteMany({ where: { ticketId, userId: actorId } });
+    if (removed.count)
+      await recordTicketEvent(tx, {
+        data: {
+          ticketId,
+          actorId,
+          targetUserId: actorId,
+          type: 'APOIO_REMOVIDO',
+          createdAt: occurredAt,
+          note: 'Assumiu como responsável principal.',
+        },
+      });
     await recordTicketEvent(tx, {
       data: {
         ticketId,
