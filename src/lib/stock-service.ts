@@ -496,3 +496,26 @@ export async function ticketMaterials(actorId: string, ticketId: string) {
     canRecord: participates(user, ticket) && withinTicketWindow(ticket),
     materials: materials.map((m) => ({ id: m.id, name: m.name, unit: m.unit, teamName: m.team.name })) };
 }
+
+export async function recordOffTicketUse(actorId: string, input: {
+  itemId: string; quantity: string; note?: string; requestId: string;
+}, photo: import('./stock-photo').ProcessedPhoto): Promise<StockMovement> {
+  return withRequestId(actorId, input.requestId, (requestId) => db.$transaction(async (tx) => {
+    const user = await stockActor(tx, actorId, 'operate');
+    const item = await lockActiveMaterial(tx, input.itemId, user.organizationId);
+    const quantity = parseQuantity(input.quantity);
+    const note = boundedText(input.note, 0, 500, 'A observação pode ter até 500 caracteres.');
+    const movement = await applyMaterialMovement(tx, item, user, { type: 'USO_AVULSO', quantity, delta: quantity.negated(), note, requestId });
+    await tx.stockPhoto.create({ data: { movementId: movement.id, organizationId: user.organizationId, ...photo, data: new Uint8Array(photo.data) } });
+    return movement;
+  }), (movement) => movement);
+}
+export async function authorizationPhoto(actorId: string, movementId: string): Promise<{ data: Uint8Array; mime: 'image/webp' }> {
+  const user = await stockActor(db, actorId, 'view');
+  const movement = await db.stockMovement.findFirst({ where: { id: movementId, organizationId: user.organizationId, type: 'USO_AVULSO' } });
+  if (!movement || (!['ADMIN', 'GESTOR'].includes(user.role) && movement.actorId !== user.id))
+    throw new AppError('Foto não encontrada.', 404);
+  const photo = await db.stockPhoto.findUnique({ where: { movementId } });
+  if (!photo) throw new AppError('Foto removida após o prazo de guarda.', 404);
+  return { data: photo.data, mime: 'image/webp' };
+}

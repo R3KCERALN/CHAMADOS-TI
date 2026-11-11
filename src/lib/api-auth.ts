@@ -7,11 +7,11 @@ export function verifyOrigin(origin: string | null) {
   if (origin !== new URL(process.env.APP_URL || 'http://localhost:3000').origin)
     throw new AppError('Origem da solicitação inválida.', 403);
 }
-export async function operationalSession() {
+export async function operationalSession({ allowManager = false } = {}) {
   const token = (await cookies()).get(SESSION_COOKIE)?.value;
   const user = await getSessionUser(token);
   if (!user || !token) throw new AppError('Autenticação necessária.', 401);
-  if (user.mustChangePassword || user.role === 'GESTOR')
+  if (user.mustChangePassword || (user.role === 'GESTOR' && !allowManager))
     throw new AppError('Acesso não permitido.', 403);
   return { user, token };
 }
