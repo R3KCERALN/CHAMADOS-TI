@@ -279,6 +279,18 @@ export async function stockAction(_: FormState, form: FormData): Promise<FormSta
         });
         success = 'Contagem registrada.';
         break;
+      case 'pegar':
+        await stock.takeTool(user.id, itemId);
+        success = 'Ferramenta registrada com você.';
+        break;
+      case 'devolver':
+        await stock.returnTool(user.id, itemId);
+        success = 'Ferramenta devolvida.';
+        break;
+      case 'desativar':
+        await stock.deactivateItem(user.id, itemId, value(form, 'reason'));
+        success = 'Item desativado.';
+        break;
       default:
         throw new AppError('Operação inválida.');
     }

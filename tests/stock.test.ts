@@ -13,13 +13,18 @@ import {
   updateItem,
   addEntry,
   adjustCount,
+  takeTool,
+  returnTool,
+  deactivateItem,
 } from '../src/lib/stock-service';
+import { updateUser } from '../src/lib/services';
 import { formatQuantity } from '../src/lib/stock-labels';
 import { Prisma, type Role } from '../src/generated/prisma/client';
 const password = process.env.TEST_PASSWORD!;
 const organizationId = APP_ORGANIZATION_ID;
 let hash: string, tiTeam: string, departmentId: string, primaryCompanyId: string;
 let admin: string, keeper: string, tech: string, manager: string, employee: string;
+let electrician: string, eletricaTeam: string;
 async function makeUser(role: Role, options = {}) {
   return db.user.create({
     data: {
@@ -72,6 +77,8 @@ before(async () => {
   tech = (await makeUser('TI')).id;
   manager = (await makeUser('GESTOR')).id;
   employee = (await makeUser('FUNCIONARIO')).id;
+  eletricaTeam = await teamId(organizationId, 'ELETRICA');
+  electrician = (await makeUser('TI', { teamId: eletricaTeam })).id;
 });
 after(() => db.$disconnect());
 
@@ -374,4 +381,183 @@ test('entrada repetida com o mesmo requestId grava um movimento só', async () =
   await assert.rejects(createItem(keeper, { ...input, requestId: randomUUID() }), {
     message: 'Já existe um item com este nome.',
   });
+});
+
+async function tool() {
+  const { item } = await createItem(keeper, {
+    kind: 'FERRAMENTA',
+    name: itemName('Furadeira'),
+    teamId: tiTeam,
+    requestId: randomUUID(),
+  });
+  return item;
+}
+const toolMoves = (itemId: string) =>
+  db.stockMovement.findMany({ where: { itemId }, orderBy: { sequence: 'asc' } });
+
+test('dois técnicos pegando a mesma ferramenta ao mesmo tempo: só um consegue', async () => {
+  const target = await tool();
+  const results = await Promise.allSettled([
+    takeTool(tech, target.id),
+    takeTool(electrician, target.id),
+  ]);
+  const won = results.filter((r) => r.status === 'fulfilled');
+  const lost = results.filter((r) => r.status === 'rejected');
+  assert.equal(won.length, 1);
+  assert.equal(lost.length, 1);
+  assert.equal((lost[0] as PromiseRejectedResult).reason.status, 409);
+  assert.equal(
+    (lost[0] as PromiseRejectedResult).reason.message,
+    'Esta ferramenta já está com outra pessoa. Atualize a página.',
+  );
+  const winner = results[0].status === 'fulfilled' ? tech : electrician;
+  const moves = await toolMoves(target.id);
+  assert.equal(moves.length, 1);
+  const [take] = moves;
+  assert.equal(take.type, 'RETIRADA');
+  assert.equal(take.actorId, winner);
+  assert.equal(take.quantity, null);
+  assert.equal(take.delta, null);
+  assert.equal(take.balanceAfter, null);
+  assert.equal(take.itemTeamId, tiTeam);
+  assert.equal(take.actorTeamId, winner === tech ? tiTeam : eletricaTeam);
+  const held = await item(target.id);
+  assert.equal(held.holderId, winner);
+  assert.ok(held.heldSince);
+  // A second tap by the holder is also refused.
+  await assert.rejects(takeTool(winner, target.id), { status: 409 });
+  await assert.rejects(takeTool(manager, target.id), { status: 403 });
+  await assert.rejects(takeTool(employee, target.id), { status: 404 });
+  const cable = await material(null, '1');
+  await assert.rejects(takeTool(tech, cable.id), { status: 400 });
+  const org = await db.organization.create({
+    data: { name: 'Org ferramenta alheia ' + randomBytes(4).toString('hex') },
+  });
+  const foreign = await db.stockItem.create({
+    data: {
+      organizationId: org.id,
+      teamId: await teamId(org.id, 'TI'),
+      kind: 'FERRAMENTA',
+      name: 'Alicate alheio',
+    },
+  });
+  await assert.rejects(takeTool(tech, foreign.id), { status: 404 });
+  await assert.rejects(returnTool(admin, foreign.id), { status: 404 });
+  await assert.rejects(deactivateItem(admin, foreign.id, 'Quebrou'), { status: 404 });
+  assert.equal(await db.stockMovement.count({ where: { itemId: foreign.id } }), 0);
+  const untouched = await item(foreign.id);
+  assert.equal(untouched.holderId, null);
+  assert.equal(untouched.active, true);
+});
+
+test('só quem está com a ferramenta ou o responsável devolve; devolução registra de quem era', async () => {
+  const target = await tool();
+  await assert.rejects(returnTool(tech, target.id), { status: 409 });
+  await takeTool(tech, target.id);
+  const message = 'Só quem está com a ferramenta ou um responsável de estoque pode devolvê-la.';
+  await assert.rejects(returnTool(electrician, target.id), { status: 403, message });
+  await assert.rejects(returnTool(manager, target.id), { status: 403 });
+  await assert.rejects(returnTool(employee, target.id), { status: 404 });
+  assert.equal((await item(target.id)).holderId, tech);
+  const own = await returnTool(tech, target.id);
+  assert.equal(own.type, 'DEVOLUCAO');
+  assert.equal(own.actorId, tech);
+  assert.equal(own.targetUserId, tech);
+  assert.equal(own.quantity, null);
+  assert.equal(own.itemTeamId, tiTeam);
+  assert.equal(own.actorTeamId, tiTeam);
+  let current = await item(target.id);
+  assert.equal(current.holderId, null);
+  assert.equal(current.heldSince, null);
+  await assert.rejects(returnTool(tech, target.id), { status: 409 });
+  await takeTool(electrician, target.id);
+  const byKeeper = await returnTool(keeper, target.id);
+  assert.equal(byKeeper.actorId, keeper);
+  assert.equal(byKeeper.targetUserId, electrician);
+  await takeTool(tech, target.id);
+  const byAdmin = await returnTool(admin, target.id);
+  assert.equal(byAdmin.targetUserId, tech);
+  assert.equal(byAdmin.actorTeamId, null);
+  current = await item(target.id);
+  assert.equal(current.holderId, null);
+  const moves = await toolMoves(target.id);
+  assert.deepEqual(
+    moves.map((m) => m.type),
+    ['RETIRADA', 'DEVOLUCAO', 'RETIRADA', 'DEVOLUCAO', 'RETIRADA', 'DEVOLUCAO'],
+  );
+  const cable = await material(null, '1');
+  await assert.rejects(returnTool(keeper, cable.id), { status: 400 });
+});
+
+test('ferramenta de técnico desativado continua com ele e o responsável a devolve', async () => {
+  const leaving = await makeUser('TI');
+  const target = await tool();
+  await takeTool(leaving.id, target.id);
+  await updateUser(admin, leaving.id, {
+    name: leaving.name,
+    username: leaving.username,
+    primaryCompanyId,
+    departmentId,
+    role: 'TI',
+    teamId: tiTeam,
+    active: false,
+  });
+  assert.equal((await db.user.findUniqueOrThrow({ where: { id: leaving.id } })).active, false);
+  const held = await item(target.id);
+  assert.equal(held.holderId, leaving.id);
+  assert.ok(held.heldSince);
+  await assert.rejects(returnTool(leaving.id, target.id), { status: 401 });
+  await assert.rejects(returnTool(tech, target.id), { status: 403 });
+  const back = await returnTool(keeper, target.id);
+  assert.equal(back.targetUserId, leaving.id);
+  assert.equal(back.actorId, keeper);
+  const current = await item(target.id);
+  assert.equal(current.holderId, null);
+  assert.equal(current.heldSince, null);
+});
+
+test('ferramenta desativada com motivo some da retirada e guarda o histórico', async () => {
+  const target = await tool();
+  await takeTool(tech, target.id);
+  await assert.rejects(deactivateItem(tech, target.id, 'Quebrou'), { status: 403 });
+  await assert.rejects(deactivateItem(manager, target.id, 'Quebrou'), { status: 403 });
+  await assert.rejects(deactivateItem(employee, target.id, 'Quebrou'), { status: 404 });
+  for (const reason of ['', ' ab ', 'x'.repeat(501)])
+    await assert.rejects(deactivateItem(keeper, target.id, reason), { status: 400 });
+  assert.equal((await item(target.id)).active, true);
+  await deactivateItem(keeper, target.id, '  Quebrou na obra  ');
+  const off = await item(target.id);
+  assert.equal(off.active, false);
+  assert.equal(off.deactivatedReason, 'Quebrou na obra');
+  assert.equal(off.holderId, null);
+  assert.equal(off.heldSince, null);
+  const audit = await db.stockItemAudit.findFirstOrThrow({
+    where: { itemId: target.id, action: 'DESATIVADO' },
+  });
+  assert.equal(audit.actorId, keeper);
+  assert.deepEqual(audit.metadata, { reason: 'Quebrou na obra', holderId: tech });
+  await assert.rejects(takeTool(electrician, target.id), { status: 409 });
+  await assert.rejects(returnTool(keeper, target.id), { status: 409 });
+  await assert.rejects(deactivateItem(admin, target.id, 'De novo'), { status: 409 });
+  const moves = await toolMoves(target.id);
+  assert.deepEqual(
+    moves.map((m) => m.type),
+    ['RETIRADA'],
+  );
+  assert.equal((await item(target.id)).holderId, null);
+  // A material: deactivating closes its open alert and blocks new entries.
+  const cable = await material('5', '2');
+  assert.equal((await alerts(cable.id)).filter((a) => a.closedAt === null).length, 1);
+  await deactivateItem(admin, cable.id, 'Fora de linha');
+  const [closed] = await alerts(cable.id);
+  assert.ok(closed.closedAt);
+  assert.equal(closed.closedByMovementId, null);
+  const audits = await db.stockItemAudit.findFirstOrThrow({
+    where: { itemId: cable.id, action: 'DESATIVADO' },
+  });
+  assert.deepEqual(audits.metadata, { reason: 'Fora de linha', holderId: null });
+  await assert.rejects(addEntry(keeper, cable.id, { quantity: '1', requestId: randomUUID() }), {
+    message: 'Este material está desativado.',
+  });
+  assert.equal(await db.stockMovement.count({ where: { itemId: cable.id } }), 1);
 });

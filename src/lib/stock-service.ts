@@ -336,3 +336,99 @@ export async function adjustCount(
     (movement) => movement,
   );
 }
+/**
+ * "Peguei": a single conditional UPDATE decides the race. Two concurrent takes serialize on the
+ * row; the loser re-evaluates `holderId IS NULL`, updates nothing and gets a 409.
+ */
+export async function takeTool(actorId: string, itemId: string): Promise<StockMovement> {
+  return db.$transaction(async (tx) => {
+    const user = await stockActor(tx, actorId, 'operate');
+    const where = { id: itemId, organizationId: user.organizationId };
+    const result = await tx.stockItem.updateMany({
+      where: { ...where, kind: 'FERRAMENTA', active: true, holderId: null },
+      data: { holderId: user.id, heldSince: new Date() },
+    });
+    if (result.count !== 1) {
+      const item = await tx.stockItem.findFirst({ where });
+      if (!item) throw new AppError('Item não encontrado.', 404);
+      if (item.kind !== 'FERRAMENTA') throw new AppError('Este item não é uma ferramenta.');
+      if (!item.active) throw new AppError('Esta ferramenta está desativada.', 409);
+      if (item.holderId === user.id) throw new AppError('Esta ferramenta já está com você.', 409);
+      throw new AppError('Esta ferramenta já está com outra pessoa. Atualize a página.', 409);
+    }
+    const item = await tx.stockItem.findUniqueOrThrow({ where: { id: itemId } });
+    return tx.stockMovement.create({
+      data: {
+        organizationId: user.organizationId,
+        itemId: item.id,
+        type: 'RETIRADA',
+        actorId: user.id,
+        itemTeamId: item.teamId,
+        actorTeamId: user.teamId,
+      },
+    });
+  });
+}
+/** "Devolvi": the holder, or a stock keeper for anyone (including a deactivated holder). */
+export async function returnTool(actorId: string, itemId: string): Promise<StockMovement> {
+  return db.$transaction(async (tx) => {
+    const user = await stockActor(tx, actorId, 'operate');
+    const item = await lockItem(tx, itemId, user.organizationId);
+    if (item.kind !== 'FERRAMENTA') throw new AppError('Este item não é uma ferramenta.');
+    if (!item.holderId)
+      throw new AppError('Esta ferramenta já está guardada. Atualize a página.', 409);
+    if (item.holderId !== user.id && !user.keeper)
+      throw new AppError(
+        'Só quem está com a ferramenta ou um responsável de estoque pode devolvê-la.',
+        403,
+      );
+    await tx.stockItem.update({
+      where: { id: item.id },
+      data: { holderId: null, heldSince: null },
+    });
+    return tx.stockMovement.create({
+      data: {
+        organizationId: user.organizationId,
+        itemId: item.id,
+        type: 'DEVOLUCAO',
+        actorId: user.id,
+        targetUserId: item.holderId,
+        itemTeamId: item.teamId,
+        actorTeamId: user.teamId,
+      },
+    });
+  });
+}
+/** Deactivates a tool or a material. History stays; a held tool is released, an open alert closes. */
+export async function deactivateItem(
+  actorId: string,
+  itemId: string,
+  reason: string,
+): Promise<StockItem> {
+  return db.$transaction(async (tx) => {
+    const user = await stockActor(tx, actorId, 'keep');
+    const text = boundedText(
+      reason,
+      3,
+      500,
+      'Informe o motivo da desativação, com 3 a 500 caracteres.',
+    );
+    const item = await lockItem(tx, itemId, user.organizationId);
+    if (!item.active) throw new AppError('Este item já está desativado.', 409);
+    const updated = await tx.stockItem.update({
+      where: { id: item.id },
+      data: { active: false, deactivatedReason: text, holderId: null, heldSince: null },
+    });
+    await syncAlert(tx, updated, updated.balance, null);
+    await tx.stockItemAudit.create({
+      data: {
+        organizationId: user.organizationId,
+        itemId: item.id,
+        actorId: user.id,
+        action: 'DESATIVADO',
+        metadata: { reason: text, holderId: item.holderId },
+      },
+    });
+    return updated;
+  });
+}
