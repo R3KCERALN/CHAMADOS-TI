@@ -50,6 +50,13 @@ export async function dispatchPushBatch(sender: PushSender = send) {
         },
       });
       if (!job || job.leaseToken !== lease) return;
+      const finish = (status: string, lastStatus?: number) =>
+        db.pushDelivery.updateMany({
+          where: { id, leaseToken: lease, status: 'PENDING' },
+          data: { status, finishedAt: new Date(), leaseToken: null, lastStatus },
+        });
+      // Stock alert deliveries have no ticket event and are not dispatched yet.
+      if (!job.event) return finish('CANCELLED');
       const { subscription: sub, event } = job;
       const ticket = event.ticket;
       const user = sub.user;
@@ -63,11 +70,6 @@ export async function dispatchPushBatch(sender: PushSender = send) {
         !['CRIADO', 'EQUIPE_ALTERADA'].includes(event.type) ||
         (user.role === 'TI' && user.teamId === ticket.teamId);
       const expired = job.createdAt.getTime() < Date.now() - 24 * 60 * 60 * 1000;
-      const finish = (status: string, lastStatus?: number) =>
-        db.pushDelivery.updateMany({
-          where: { id, leaseToken: lease, status: 'PENDING' },
-          data: { status, finishedAt: new Date(), leaseToken: null, lastStatus },
-        });
       if (
         !sub.active ||
         !sub.organization.active ||

@@ -3,7 +3,8 @@
 ## Escopo
 
 - Monólito Next.js 16/App Router, React, TS strict, Tailwind 4, Prisma 7/adapter-pg, PostgreSQL 17, npm. Webpack em dev/build por incompatibilidade local do Turbopack; validar antes de trocar.
-- Sistema fechado: sem signup/auth externa, SaaS comercial, IA, microserviços, offline completo, inventário, integrações, reabertura, ranking/score. Deploy externo só mediante pedido.
+- Sistema fechado: sem signup/auth externa, SaaS comercial, IA, microserviços, offline completo, integrações, reabertura, ranking/score. Deploy externo só mediante pedido.
+- Estoque único de ferramentas e materiais de manutenção (sem preço, fornecedor, compra ou vários locais): leia `docs/superpowers/specs/2026-11-10-estoque-design.md`.
 
 ## Segurança e permissões
 
@@ -12,7 +13,7 @@
 - Equipes: leia `docs/organization-model.md` (Team). Duas equipes por organização, **TI** e **Elétrica** (tabela `Team`, criada por trigger em cada Organization). `Role.TI` é exibido como “Técnico” e exige `teamId`; ADMIN, GESTOR e FUNCIONARIO não têm equipe. Todo Ticket tem `teamId` (NOT NULL); categorias pertencem a uma equipe.
 - Leitura por equipe: técnico vê o chamado se é da sua equipe **ou** se está em `TicketParticipant`; remover o apoio remove o acesso na hora. Outra equipe responde 404 em detalhe, `/notificacoes/[id]`, comentário, classificação, localização e busca por número. ADMIN vê tudo (filtro por equipe na fila); GESTOR continua sem detalhe operacional. O principal é sempre ADMIN ou técnico da equipe do chamado; outra equipe entra só como apoio (a lista de apoio traz “Nome · Equipe”).
 - Mudar de equipe: principal/ADMIN, chamado não resolvido, via `moveTicketTeam`; volta NOVO, sem responsável, categoria limpa, apoios mantidos, evento `EQUIPE_ALTERADA` e aviso só à equipe de destino. Assumir remove o assumidor do apoio. Não trocar a equipe de técnico que é principal de chamado aberto. Abertura comum exige escolha de equipe sem valor padrão; atendimento rápido usa a equipe de quem registra (ADMIN escolhe).
-- Mutações: Server Actions ou endpoints push, com Origin contra APP_URL; nunca GET. Preservar login com limite persistente/erro genérico e erros sem stack trace.
+- Mutações: Server Actions ou endpoints push, com Origin contra APP_URL; nunca GET. Exceção às Server Actions: `POST /api/estoque/uso-avulso` (foto), com Origin contra APP_URL. Preservar login com limite persistente/erro genérico e erros sem stack trace.
 - Senhas/PINs **6–128 caracteres**, inclusive só números, com Argon2id; parâmetros e sessão conforme README § Segurança/Modelo de dados. Novas/redefinidas exigem troca; alterações de usuário/senha revogam sessões. Persistir só hash do token; cookies HttpOnly/Lax, Secure fora de localhost; validade 8 h.
 
 ## Persistência e concorrência

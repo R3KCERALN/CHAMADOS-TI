@@ -56,6 +56,31 @@ enum Complexity {
   ALTA
   CRITICA
 }
+enum StockItemKind {
+  FERRAMENTA
+  MATERIAL
+}
+enum StockUnit {
+  UNIDADE
+  METRO
+  ROLO
+  CAIXA
+  PACOTE
+}
+enum StockMovementType {
+  ENTRADA
+  USO_CHAMADO
+  USO_AVULSO
+  AJUSTE
+  ESTORNO
+  RETIRADA
+  DEVOLUCAO
+}
+enum StockReviewOutcome {
+  CONFERIDA
+  QUESTIONADA
+  ENCERRADA
+}
 model Category {
   organizationId String
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
@@ -116,6 +141,13 @@ model User {
   comments           TicketComment[]
   auditActions       UserAudit[] @relation("AuditActor")
   auditSubjects      UserAudit[] @relation("AuditSubject")
+  stockKeeper        Boolean @default(false)
+  heldStockItems     StockItem[] @relation("StockHolder")
+  stockMovements     StockMovement[] @relation("StockMovementActor")
+  targetedStockMovements StockMovement[] @relation("StockMovementTarget")
+  stockReviews       StockReview[]
+  requestedStockAlerts StockAlert[]
+  stockItemAudits    StockItemAudit[]
   @@index([departmentId])
   @@index([role, active])
   @@index([organizationId, role, active])
@@ -175,6 +207,7 @@ model Ticket {
   participants    TicketParticipant[]
   events          TicketEvent[]
   comments        TicketComment[]
+  stockMovements  StockMovement[]
   @@index([organizationId, createdAt])
   @@index([organizationId, resolvedAt])
   @@index([organizationId, status])
@@ -273,6 +306,12 @@ model Organization {
   companies Company[]
   tickets Ticket[]
   teams Team[]
+  stockItems StockItem[]
+  stockMovements StockMovement[]
+  stockPhotos StockPhoto[]
+  stockReviews StockReview[]
+  stockAlerts StockAlert[]
+  stockItemAudits StockItemAudit[]
 }
 model Team {
   id String @id @default(cuid())
@@ -285,6 +324,10 @@ model Team {
   users User[]
   tickets Ticket[]
   categories Category[]
+  stockItems StockItem[]
+  itemTeamStockMovements StockMovement[] @relation("StockMovementItemTeam")
+  actorTeamStockMovements StockMovement[] @relation("StockMovementActorTeam")
+  ticketTeamStockMovements StockMovement[] @relation("StockMovementTicketTeam")
   @@unique([organizationId, key])
 }
 model Company {
@@ -355,8 +398,11 @@ model PushSubscription {
 }
 model PushDelivery {
   id String @id @default(cuid())
-  eventId String
-  event TicketEvent @relation(fields: [eventId], references: [id], onDelete: Restrict)
+  // Exactly one origin (CHECK PushDelivery_single_source): a ticket event or a stock alert.
+  eventId String?
+  event TicketEvent? @relation(fields: [eventId], references: [id], onDelete: Restrict)
+  stockAlertId String?
+  stockAlert StockAlert? @relation(fields: [stockAlertId], references: [id], onDelete: Restrict)
   subscriptionId String
   subscription PushSubscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
   status String @default("PENDING")
@@ -367,6 +413,127 @@ model PushDelivery {
   finishedAt DateTime?
   lastStatus Int?
   @@unique([eventId, subscriptionId])
+  @@unique([stockAlertId, subscriptionId])
   @@index([status, availableAt])
   @@index([createdAt])
+}
+
+// Stock: CHECKs, the open-alert partial unique index and organization triggers live in
+// prisma/migrations/202611110001_stock. Movements, reviews and item audit are append-only.
+model StockItem {
+  id String @id @default(cuid())
+  organizationId String
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  teamId String
+  team Team @relation(fields: [teamId], references: [id], onDelete: Restrict)
+  kind StockItemKind
+  name String
+  unit StockUnit?
+  minimum Decimal? @db.Decimal(12, 3)
+  balance Decimal @default(0) @db.Decimal(12, 3)
+  needsCount Boolean @default(false)
+  holderId String?
+  holder User? @relation("StockHolder", fields: [holderId], references: [id], onDelete: Restrict)
+  heldSince DateTime?
+  active Boolean @default(true)
+  deactivatedReason String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  movements StockMovement[]
+  alerts StockAlert[]
+  audits StockItemAudit[]
+  @@unique([organizationId, name])
+  @@index([organizationId, kind, active])
+}
+model StockMovement {
+  id String @id @default(cuid())
+  sequence Int @unique @default(autoincrement())
+  organizationId String
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  itemId String
+  item StockItem @relation(fields: [itemId], references: [id], onDelete: Restrict)
+  type StockMovementType
+  quantity Decimal? @db.Decimal(12, 3)
+  delta Decimal? @db.Decimal(12, 3)
+  balanceAfter Decimal? @db.Decimal(12, 3)
+  actorId String
+  actor User @relation("StockMovementActor", fields: [actorId], references: [id], onDelete: Restrict)
+  targetUserId String?
+  targetUser User? @relation("StockMovementTarget", fields: [targetUserId], references: [id], onDelete: Restrict)
+  ticketId String?
+  ticket Ticket? @relation(fields: [ticketId], references: [id], onDelete: Restrict)
+  reversesId String? @unique
+  reverses StockMovement? @relation("StockReversal", fields: [reversesId], references: [id], onDelete: Restrict)
+  reversedBy StockMovement? @relation("StockReversal")
+  reason String?
+  note String?
+  requestId String?
+  itemTeamId String
+  itemTeam Team @relation("StockMovementItemTeam", fields: [itemTeamId], references: [id], onDelete: Restrict)
+  actorTeamId String?
+  actorTeam Team? @relation("StockMovementActorTeam", fields: [actorTeamId], references: [id], onDelete: Restrict)
+  ticketTeamId String?
+  ticketTeam Team? @relation("StockMovementTicketTeam", fields: [ticketTeamId], references: [id], onDelete: Restrict)
+  createdAt DateTime @default(now())
+  photo StockPhoto?
+  reviews StockReview[]
+  openedAlerts StockAlert[] @relation("StockAlertOpenedBy")
+  closedAlerts StockAlert[] @relation("StockAlertClosedBy")
+  @@unique([organizationId, requestId])
+  @@index([organizationId, createdAt])
+  @@index([itemId, sequence])
+  @@index([ticketId])
+}
+model StockPhoto {
+  movementId String @id
+  movement StockMovement @relation(fields: [movementId], references: [id], onDelete: Restrict)
+  organizationId String
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  mime String
+  size Int
+  data Bytes
+  createdAt DateTime @default(now())
+}
+model StockReview {
+  id String @id @default(cuid())
+  sequence Int @unique @default(autoincrement())
+  organizationId String
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  movementId String
+  movement StockMovement @relation(fields: [movementId], references: [id], onDelete: Restrict)
+  actorId String
+  actor User @relation(fields: [actorId], references: [id], onDelete: Restrict)
+  outcome StockReviewOutcome
+  note String?
+  createdAt DateTime @default(now())
+  @@index([movementId, sequence])
+}
+model StockAlert {
+  id String @id @default(cuid())
+  organizationId String
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  itemId String
+  item StockItem @relation(fields: [itemId], references: [id], onDelete: Restrict)
+  openedAt DateTime @default(now())
+  openedByMovementId String?
+  openedByMovement StockMovement? @relation("StockAlertOpenedBy", fields: [openedByMovementId], references: [id], onDelete: Restrict)
+  closedAt DateTime?
+  closedByMovementId String?
+  closedByMovement StockMovement? @relation("StockAlertClosedBy", fields: [closedByMovementId], references: [id], onDelete: Restrict)
+  requestedById String?
+  requestedBy User? @relation(fields: [requestedById], references: [id], onDelete: Restrict)
+  requestedAt DateTime?
+  pushDeliveries PushDelivery[]
+}
+model StockItemAudit {
+  id String @id @default(cuid())
+  organizationId String
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  itemId String
+  item StockItem @relation(fields: [itemId], references: [id], onDelete: Restrict)
+  actorId String
+  actor User @relation(fields: [actorId], references: [id], onDelete: Restrict)
+  action String
+  metadata Json?
+  createdAt DateTime @default(now())
 }

@@ -62,7 +62,7 @@ try {
   await client.query(`REVOKE ALL ON TABLE "_prisma_migrations" FROM ${quoted.role}`);
   // Audit history is append-only for the web process: it only inserts and reads these rows.
   await client.query(
-    `REVOKE UPDATE, DELETE, TRUNCATE ON TABLE "TicketEvent", "UserAudit", "TicketComment" FROM ${quoted.role}`,
+    `REVOKE UPDATE, DELETE, TRUNCATE ON TABLE "TicketEvent", "UserAudit", "TicketComment", "StockMovement", "StockReview", "StockItemAudit" FROM ${quoted.role}`,
   );
   await client.query('COMMIT');
   console.log(`database_${mode}_complete`);
