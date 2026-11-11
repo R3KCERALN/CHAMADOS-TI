@@ -4,11 +4,13 @@
 
 ```text
 Organization (grupo/cliente da instalação)
+├── Team (equipe técnica: TI e Elétrica)
 └── Company (pessoa jurídica / CNPJ; “Filial” nesta interface)
     └── Unit (local físico opcional; “Unidade”)
 
 Ticket
 ├── organizationId
+├── teamId (obrigatório; equipe atual do chamado)
 ├── companyId (obrigatório em novas aberturas; nullable para legado)
 ├── unitId (opcional)
 ├── openedByUserId (User que registrou)
@@ -30,13 +32,23 @@ Não há provisioning público, billing, subdomínios, planos, super-admin ou tr
 
 ## Isolamento
 
-User, Department, Category, Company e Ticket possuem `organizationId` obrigatório. Unit deriva o escopo de Company. Sessões derivam de User; eventos, comentários e apoios derivam de Ticket; auditoria de usuário deriva de seus usuários relacionados. As tabelas de permissões adicionais usam relações reais `UserCompanyAccess` e `UserUnitAccess`, nunca CSV ou JSON de IDs.
+User, Department, Category, Team, Company e Ticket possuem `organizationId` obrigatório. Unit deriva o escopo de Company. Sessões derivam de User; eventos, comentários e apoios derivam de Ticket; auditoria de usuário deriva de seus usuários relacionados. As tabelas de permissões adicionais usam relações reais `UserCompanyAccess` e `UserUnitAccess`, nunca CSV ou JSON de IDs.
 
-O ator é relido no banco em `src/lib/access.ts`. O escopo vem desse ator/sessão, nunca de um `organizationId` enviado no formulário. Consultas de listas, opções, busca de pessoas, detalhes, administração, contadores, SQL analítico e CSV são limitadas à organização. IDs recebidos passam pela validação de pertencimento e papel. TI continua atendendo **todas** as Companies da sua organização, sem limitação por sua localização administrativa.
+O ator é relido no banco em `src/lib/access.ts`. O escopo vem desse ator/sessão, nunca de um `organizationId` enviado no formulário. Consultas de listas, opções, busca de pessoas, detalhes, administração, contadores, SQL analítico e CSV são limitadas à organização. IDs recebidos passam pela validação de pertencimento e papel. TI continua atendendo **todas** as Companies da sua organização, sem limitação por sua localização administrativa. A limitação do técnico é por equipe (seção abaixo).
 
 FKs preservam referências. Triggers versionados na migration também rejeitam relações entre organizações em escritas diretas, incluindo eventos, comentários, apoios e permissões adicionais. O `organizationId` de entidades existentes não pode ser alterado. Esses controles complementam o escopo das consultas; não se trata de PostgreSQL RLS. A credencial administrativa do banco não representa um usuário final isolado.
 
 Não há exclusão física na interface. Desativar Company/Unit mantém referências e relatórios. A Company de uma Unit já criada é imutável para não reinterpretar o histórico; para mover fisicamente uma unidade, desative e crie outra no destino. Nome, código e situação continuam editáveis.
+
+## Equipes
+
+`Team` é uma tabela por organização (`organizationId`, `key` TI ou ELETRICA, `name`, `active`), única por organização e chave. O trigger `Organization_create_teams` (função `create_organization_teams`) cria as equipes “TI” e “Elétrica” em **toda** Organization inserida; a migration `202611100001_teams` também as cria para as organizações existentes. Não há cadastro de equipes na interface.
+
+- `User.teamId`: obrigatório para o perfil `TI` (exibido como “Técnico”), nulo para ADMIN, GESTOR e FUNCIONARIO.
+- `Ticket.teamId`: obrigatório; os chamados anteriores à migration `202611100002_ticket_teams` foram atribuídos à TI, sem reescrever eventos. `Category.teamId` define a equipe da categoria, e o nome é único por organização e equipe.
+- Triggers de fronteira (`enforce_organization_boundary`) rejeitam equipe, usuário, chamado ou categoria de organizações diferentes. A equipe sempre vem do banco/servidor (da escolha validada na organização do ator), nunca de um `organizationId` do cliente.
+- Escopo de leitura: ADMIN vê tudo; técnico vê chamados da própria equipe e os de outra equipe em que consta em `TicketParticipant`; o responsável principal é ADMIN ou da equipe do chamado. Detalhe, notificações, comentário, classificação, localização, busca (inclusive por número), contadores e avisos respeitam esse escopo.
+- Mudar o chamado de equipe gera o evento `EQUIPE_ALTERADA` e devolve o chamado a NOVO, sem responsável e sem categoria; os apoios permanecem.
 
 ## Usuários e locais autorizados
 

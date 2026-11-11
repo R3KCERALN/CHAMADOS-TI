@@ -14,7 +14,7 @@ export function ManagementTicketTable({
   dates?: boolean;
 }) {
   return (
-    <div className="table-scroll">
+    <div className="table-scroll" role="region" aria-label="Chamados" tabIndex={0}>
       <table>
         <thead>
           <tr>

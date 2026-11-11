@@ -6,7 +6,7 @@ import { APP_ORGANIZATION_ID } from '../../src/lib/config';
 import * as service from '../../src/lib/services';
 import { syntheticCnpj, teamId } from '../fixtures';
 import type { Role } from '../../src/generated/prisma/client';
-let employee: string, tech: string, tech2: string;
+let employee: string, tech: string, tech2: string, tiTeam: string;
 const password = process.env.TEST_PASSWORD!;
 async function session(browser: Browser, id: string) {
   const user = await db.user.findUniqueOrThrow({ where: { id } });
@@ -28,6 +28,7 @@ async function session(browser: Browser, id: string) {
 }
 test.beforeAll(async () => {
   const organizationId = APP_ORGANIZATION_ID;
+  tiTeam = await teamId(organizationId, 'TI');
   const company = await db.company.create({
     data: { organizationId, displayName: 'Local Atualização', cnpj: syntheticCnpj() },
   });
@@ -49,7 +50,7 @@ test.beforeAll(async () => {
               username: `live.${randomBytes(6).toString('hex')}`,
               passwordHash: hash,
               mustChangePassword: false,
-              ...(role === 'TI' && { teamId: await teamId(organizationId, 'TI') }),
+              ...(role === 'TI' && { teamId: tiTeam }),
             },
           })
         ).id,
@@ -72,6 +73,7 @@ test('fila, contadores e detalhes atualizam sem reload, preservando filtros e ra
   const ticket = await service.createTicket(employee, {
     description: 'Teste-ao-vivo automático',
     impact: 'PARCIAL',
+    teamId: tiTeam,
   });
   const row = page.locator(`.ticket-row[href="/chamados/${ticket.id}"]`);
   await expect(row).toBeVisible({ timeout: 15000 });
@@ -170,6 +172,7 @@ test('endpoints exigem autenticação/origem; inscrição não aceita terceiro; 
   const ticket = await service.createTicket(employee, {
     description: 'Destino do push após login',
     impact: 'BAIXO',
+    teamId: tiTeam,
   });
   const clean = await browser.newContext();
   const page = await clean.newPage();
