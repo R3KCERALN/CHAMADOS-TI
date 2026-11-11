@@ -3,6 +3,7 @@ import { notFound } from 'next/navigation';
 import { requireUser } from '@/lib/auth';
 import { analyticsOptions, managementTickets } from '@/lib/analytics-service';
 import { ManagementFilters } from '@/components/management/filters';
+import { PdfLink } from '@/components/management/pdf-link';
 import { ManagementTicketTable } from '@/components/management/ticket-table';
 import { Pagination } from '@/components/pagination';
 import { queryString, type SearchParams } from '@/lib/period';
@@ -39,9 +40,12 @@ export default async function ReportTickets({
               : 'Abertos ou resolvidos no período, uma linha por chamado.'}
           </p>
         </div>
-        <a className="button secondary" href={`/gestor/exportar?${queryString(params)}`}>
-          Exportar período CSV
-        </a>
+        <div className="management-links">
+          <PdfLink screen="chamados" params={params} />
+          <a className="button secondary" href={`/gestor/exportar?${queryString(params)}`}>
+            Exportar período CSV
+          </a>
+        </div>
       </div>
       <ManagementFilters options={options} values={values} />
       <section className="panel">

@@ -1,3 +1,5 @@
+'use client';
+import { useState } from 'react';
 import { UserLocationFields } from './user-location-fields';
 import type { LocationCompany } from './location-fields';
 import { roleLabels } from '@/lib/labels';
@@ -5,15 +7,18 @@ import { FieldError } from './form';
 export function UserFields({
   departments,
   companies,
+  teams,
   user,
 }: {
   departments: { id: string; name: string }[];
   companies: LocationCompany[];
+  teams: { id: string; name: string }[];
   user?: {
     name: string;
     username: string;
     role: string;
     departmentId: string;
+    teamId?: string | null;
     active: boolean;
     primaryCompanyId: string | null;
     primaryUnitId: string | null;
@@ -21,6 +26,7 @@ export function UserFields({
     unitAccess?: { unitId: string }[];
   };
 }) {
+  const [role, setRole] = useState(user?.role || 'FUNCIONARIO');
   return (
     <>
       <div className="field">
@@ -83,7 +89,8 @@ export function UserFields({
           <select
             id="role"
             name="role"
-            defaultValue={user?.role || 'FUNCIONARIO'}
+            value={role}
+            onChange={(event) => setRole(event.target.value)}
             required
             aria-describedby="role-error"
           >
@@ -96,6 +103,28 @@ export function UserFields({
           <FieldError name="role" id="role-error" />
         </div>
       </div>
+      {role === 'TI' && (
+        <div className="field">
+          <label htmlFor="teamId">Equipe</label>
+          <select
+            id="teamId"
+            name="teamId"
+            defaultValue={user?.teamId || ''}
+            required
+            aria-describedby="teamId-error"
+          >
+            <option value="" disabled>
+              Selecione a equipe
+            </option>
+            {teams.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.name}
+              </option>
+            ))}
+          </select>
+          <FieldError name="teamId" id="teamId-error" />
+        </div>
+      )}
       <UserLocationFields companies={companies} user={user} />
       {user ? (
         <div className="field">

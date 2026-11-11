@@ -1,12 +1,18 @@
 import { ActionForm, FieldError, Submit } from './form';
 import { createTicketAction } from '@/app/actions';
 import { impactLabels } from '@/lib/labels';
+const teamHelp: Record<string, string> = {
+  TI: 'Computador, sistema, internet, impressora',
+  ELETRICA: 'Tomada, iluminação, disjuntor, fiação',
+};
 export function TicketForm({
   children,
   quick = false,
+  teams = [],
 }: {
   children?: React.ReactNode;
   quick?: boolean;
+  teams?: { id: string; key: string; name: string }[];
 }) {
   return (
     <ActionForm action={createTicketAction} className={`form-stack${quick ? ' quick-form' : ''}`}>
@@ -30,6 +36,39 @@ export function TicketForm({
         </p>
         <FieldError name="description" id="description-error" />
       </div>
+      {!quick && (
+        <fieldset>
+          <legend>Para qual equipe é o chamado?</legend>
+          <div className="impact-options">
+            {teams.map((team) => (
+              <label key={team.id} className="impact-option">
+                <input type="radio" name="teamId" value={team.id} required />
+                <span>
+                  <strong>{team.name}</strong>
+                  <small>{teamHelp[team.key]}</small>
+                </span>
+              </label>
+            ))}
+          </div>
+          <FieldError name="teamId" />
+        </fieldset>
+      )}
+      {quick && teams.length > 0 && (
+        <div className="field">
+          <label htmlFor="quick-team">Equipe do atendimento</label>
+          <select id="quick-team" name="teamId" defaultValue="" required>
+            <option value="" disabled>
+              Selecione a equipe
+            </option>
+            {teams.map((team) => (
+              <option key={team.id} value={team.id}>
+                {team.name}
+              </option>
+            ))}
+          </select>
+          <FieldError name="teamId" />
+        </div>
+      )}
       {quick ? (
         <div className="field">
           <label htmlFor="quick-impact">Impacto do atendimento</label>
@@ -69,7 +108,7 @@ export function TicketForm({
         <p className="muted small">
           {quick
             ? 'Você será o responsável e o atendimento começa agora.'
-            : 'O TI receberá seu chamado. Você acompanha tudo por aqui.'}
+            : 'A equipe escolhida receberá seu chamado. Você acompanha tudo por aqui.'}
         </p>
         <Submit>{quick ? 'Iniciar atendimento' : 'Enviar chamado'}</Submit>
       </div>

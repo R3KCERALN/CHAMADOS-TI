@@ -8,6 +8,7 @@ export function csvCell(value: unknown) {
 export const csvHeader =
   [
     'Número',
+    'Equipe',
     labels.company,
     'CNPJ',
     labels.unit,
@@ -35,6 +36,7 @@ export function csvRow(row: ExportRow) {
   return (
     [
       row.number,
+      row.team,
       row.company || labels.noCompany,
       row.cnpj,
       row.unit,

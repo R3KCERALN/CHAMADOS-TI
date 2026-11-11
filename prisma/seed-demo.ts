@@ -46,7 +46,10 @@ async function main() {
     ['demo.ana', 'Ana Financeiro', 'FUNCIONARIO'],
     ['demo.pedro', 'Pedro Comercial', 'FUNCIONARIO'],
     ['demo.julia', 'Júlia RH', 'FUNCIONARIO'],
+    ['demo.eletricista', 'Eduardo Eletricista', 'TI'],
   ] as const;
+  const teams = await db.team.findMany({ where: { organizationId } });
+  const teamIdOf = (key: string) => teams.find((t) => t.key === key)!.id;
   const users = [];
   for (let i = 0; i < people.length; i++) {
     const [username, name, role] = people[i];
@@ -57,6 +60,8 @@ async function main() {
           username,
           name,
           role: role as Role,
+          teamId:
+            role === 'TI' ? teamIdOf(username === 'demo.eletricista' ? 'ELETRICA' : 'TI') : null,
           departmentId: role === 'TI' ? ti.id : departments[i % departments.length].id,
           passwordHash: hash,
           mustChangePassword: true,
@@ -66,7 +71,7 @@ async function main() {
     );
   }
   const technicians = users.slice(1, 5),
-    requesters = users.slice(5);
+    requesters = users.slice(5, 8);
   const now = Date.now();
   const hour = 3600000;
   for (let i = 0; i < 54; i++) {
@@ -94,6 +99,7 @@ async function main() {
       data: {
         description: `Demonstração ${i + 1}: ${category?.name || 'Solicitação em análise'} — atendimento do setor.`,
         organizationId,
+        teamId: teamIdOf('TI'),
         requesterName: requester.name,
         openedByUserId: requester.id,
         requesterId: requester.id,
@@ -250,6 +256,9 @@ async function addLocations() {
         unitId: units.find((u) => u.companyId === companies[i % 4].id)?.id || null,
       },
     });
+  const tiTeam = await db.team.findUniqueOrThrow({
+    where: { organizationId_key: { organizationId, key: 'TI' } },
+  });
   const tech = users.find((u) => u.username === 'demo.carlos')!;
   const requester = users.find((u) => u.username === 'demo.ana')!;
   for (let i = 0; i < 6; i++) {
@@ -264,6 +273,7 @@ async function addLocations() {
         data: {
           id,
           organizationId,
+          teamId: tiTeam.id,
           openedByUserId: tech.id,
           requesterId: manual ? null : requester.id,
           requesterName: manual

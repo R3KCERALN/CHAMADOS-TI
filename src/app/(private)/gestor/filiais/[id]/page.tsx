@@ -4,6 +4,7 @@ import { requireUser } from '@/lib/auth';
 import { db } from '@/lib/db';
 import { analyticsOptions, overview } from '@/lib/analytics-service';
 import { ManagementFilters } from '@/components/management/filters';
+import { PdfLink } from '@/components/management/pdf-link';
 import { MetricCard, TimeCard } from '@/components/management/summary';
 import { Bars } from '@/components/management/charts';
 import { organizationLabels as labels } from '@/lib/organization-labels';
@@ -52,12 +53,15 @@ export default async function CompanyDetail({
           <h1>{company?.displayName || labels.noCompany}</h1>
           <p>{company?.legalName || 'Demanda e ciclo operacional deste local.'}</p>
         </div>
-        <Link
-          className="button primary"
-          href={`/gestor/chamados?${queryString(search, { pagina: '' })}`}
-        >
-          Consultar chamados
-        </Link>
+        <div className="management-links">
+          <PdfLink screen="filial" params={search} id={id} />
+          <Link
+            className="button primary"
+            href={`/gestor/chamados?${queryString(search, { pagina: '' })}`}
+          >
+            Consultar chamados
+          </Link>
+        </div>
       </div>
       <InvalidFilterNotice aviso={query.aviso} />
       <ManagementFilters options={options} values={values} lockedCompany={id} />

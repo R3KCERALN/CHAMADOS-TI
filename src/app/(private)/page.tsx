@@ -19,7 +19,14 @@ export default async function HomePage() {
   const counts = employee
     ? null
     : await Promise.all([
-        db.ticket.count({ where: { organizationId: user.organizationId, status: 'NOVO' } }),
+        db.ticket.count({
+          where: {
+            organizationId: user.organizationId,
+            status: 'NOVO',
+            // A technician's queue is the own team; the ADMIN sees both teams.
+            ...(user.role === 'TI' && { teamId: user.teamId ?? '' }),
+          },
+        }),
         db.ticket.count({
           where: {
             organizationId: user.organizationId,

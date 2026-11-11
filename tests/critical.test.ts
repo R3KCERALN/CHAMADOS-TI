@@ -2,7 +2,7 @@ import { before, after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash, randomBytes } from 'node:crypto';
 import argon2 from 'argon2';
-import { syntheticCnpj } from './fixtures';
+import { syntheticCnpj, teamId } from './fixtures';
 import { APP_ORGANIZATION_ID } from '../src/lib/config';
 import { db } from '../src/lib/db';
 import {
@@ -14,6 +14,7 @@ import {
 } from '../src/lib/auth-service';
 import * as service from '../src/lib/services';
 import { AppError } from '../src/lib/errors';
+import { ticketNumber } from '../src/lib/labels';
 import type { Role } from '../src/generated/prisma/client';
 const password = process.env.TEST_PASSWORD!;
 let admin: string,
@@ -21,11 +22,13 @@ let admin: string,
   other: string,
   tech: string,
   tech2: string,
+  eletricista: string,
+  eletricista2: string,
   manager: string,
   departmentId: string,
   primaryCompanyId: string;
 const organizationId = APP_ORGANIZATION_ID;
-let hash: string;
+let hash: string, tiTeam: string, eletricaTeam: string;
 async function makeUser(role: Role, options = {}) {
   return db.user.create({
     data: {
@@ -37,12 +40,15 @@ async function makeUser(role: Role, options = {}) {
       role,
       passwordHash: hash,
       mustChangePassword: false,
+      ...(role === 'TI' && { teamId: await teamId(organizationId, 'TI') }),
       ...options,
     },
   });
 }
 before(async () => {
   assert.match(new URL(process.env.DATABASE_URL!).pathname, /^\/central_test_\d+_[a-f0-9]{8}$/);
+  tiTeam = await teamId(organizationId, 'TI');
+  eletricaTeam = await teamId(organizationId, 'ELETRICA');
   primaryCompanyId = (
     await db.company.create({
       data: {
@@ -60,12 +66,16 @@ before(async () => {
       async (role) => (await makeUser(role)).id,
     ),
   );
+  [eletricista, eletricista2] = await Promise.all(
+    [1, 2].map(async () => (await makeUser('TI', { teamId: eletricaTeam })).id),
+  );
 });
 after(() => db.$disconnect());
 const newTicket = () =>
   service.createTicket(employee, {
     description: 'Meu computador não inicia.',
     impact: 'BLOQUEADO',
+    teamId: tiTeam,
   });
 test('login válido cria sessão server-side, guarda somente hash do token e logout revoga', async () => {
   const user = await db.user.findUniqueOrThrow({ where: { id: employee } });
@@ -129,6 +139,7 @@ test('somente ADMIN lista e cria usuários; role enviada não promove o autor', 
     primaryCompanyId,
     departmentId,
     role: 'TI',
+    teamId: await teamId(organizationId, 'TI'),
     password,
   };
   await assert.rejects(service.createUser(employee, input), /permissão/);
@@ -141,6 +152,127 @@ test('somente ADMIN lista e cria usuários; role enviada não promove o autor', 
     await db.userAudit.count({ where: { subjectId: user.id, action: 'USUARIO_CRIADO' } }),
     1,
   );
+});
+test('técnico exige equipe ativa da própria organização; outros papéis não têm equipe', async () => {
+  const base = {
+    name: 'Pessoa com equipe',
+    primaryCompanyId,
+    departmentId,
+    password,
+  };
+  const username = () => `equipe.${randomBytes(4).toString('hex')}`;
+  await assert.rejects(
+    service.createUser(admin, { ...base, username: username(), role: 'TI' }),
+    /Selecione a equipe/,
+  );
+  const foreignOrg = await db.organization.create({ data: { name: 'Equipes de outra org' } });
+  await assert.rejects(
+    service.createUser(admin, {
+      ...base,
+      username: username(),
+      role: 'TI',
+      teamId: await teamId(foreignOrg.id, 'TI'),
+    }),
+    /Selecione a equipe/,
+  );
+  const eletrica = await teamId(organizationId, 'ELETRICA');
+  const electrician = await service.createUser(admin, {
+    ...base,
+    username: username(),
+    role: 'TI',
+    teamId: eletrica,
+  });
+  assert.equal(
+    (await db.user.findUniqueOrThrow({ where: { id: electrician.id } })).teamId,
+    eletrica,
+  );
+  const employeeWithTeam = await service.createUser(admin, {
+    ...base,
+    username: username(),
+    role: 'FUNCIONARIO',
+    teamId: eletrica,
+  });
+  assert.equal(
+    (await db.user.findUniqueOrThrow({ where: { id: employeeWithTeam.id } })).teamId,
+    null,
+  );
+});
+test('troca de equipe é bloqueada enquanto o técnico for responsável por chamados não resolvidos', async () => {
+  const technician = await makeUser('TI');
+  const ticket = await newTicket();
+  await service.claimTicket(technician.id, ticket.id);
+  const eletrica = await teamId(organizationId, 'ELETRICA');
+  const change = (teamId: string) =>
+    service.updateUser(admin, technician.id, {
+      name: technician.name,
+      username: technician.username,
+      primaryCompanyId,
+      departmentId,
+      role: 'TI',
+      teamId,
+      active: true,
+    });
+  await assert.rejects(change(eletrica), /Transfira os 1 chamado/);
+  assert.equal(
+    (await db.user.findUniqueOrThrow({ where: { id: technician.id } })).teamId,
+    technician.teamId,
+  );
+  await service.changeStatus(technician.id, ticket.id, { status: 'RESOLVIDO', note: 'Feito.' });
+  await change(eletrica);
+  assert.equal(
+    (await db.user.findUniqueOrThrow({ where: { id: technician.id } })).teamId,
+    eletrica,
+  );
+  const audit = await db.userAudit.findFirstOrThrow({
+    where: { subjectId: technician.id, action: 'USUARIO_ATUALIZADO' },
+    orderBy: { createdAt: 'desc' },
+  });
+  const metadata = audit.metadata as { before: { teamId: string }; after: { teamId: string } };
+  assert.equal(metadata.before.teamId, technician.teamId);
+  assert.equal(metadata.after.teamId, eletrica);
+});
+test('rebaixar ADMIN para técnico é bloqueado enquanto ele for responsável por chamado de outra equipe', async () => {
+  const target = await makeUser('ADMIN');
+  const tiTicket = await newTicket();
+  const eletricaTicket = await service.createTicket(employee, {
+    description: 'Tomada sem energia.',
+    impact: 'PARCIAL',
+    teamId: eletricaTeam,
+  });
+  await service.claimTicket(target.id, tiTicket.id);
+  await service.claimTicket(target.id, eletricaTicket.id);
+  const demote = () =>
+    service.updateUser(admin, target.id, {
+      name: target.name,
+      username: target.username,
+      primaryCompanyId,
+      departmentId,
+      role: 'TI',
+      teamId: tiTeam,
+      active: true,
+    });
+  await assert.rejects(demote(), /Transfira os 1 chamado\(s\)/);
+  const unchanged = await db.user.findUniqueOrThrow({ where: { id: target.id } });
+  assert.equal(unchanged.role, 'ADMIN');
+  assert.equal(unchanged.teamId, null);
+  await service.changeStatus(target.id, eletricaTicket.id, { status: 'RESOLVIDO', note: 'Feito.' });
+  await demote();
+  const demoted = await db.user.findUniqueOrThrow({ where: { id: target.id } });
+  assert.equal(demoted.role, 'TI');
+  assert.equal(demoted.teamId, tiTeam);
+});
+test('rebaixar técnico para funcionário limpa a equipe', async () => {
+  const technician = await makeUser('TI');
+  assert.ok(technician.teamId);
+  await service.updateUser(admin, technician.id, {
+    name: technician.name,
+    username: technician.username,
+    primaryCompanyId,
+    departmentId,
+    role: 'FUNCIONARIO',
+    active: true,
+  });
+  assert.equal((await db.user.findUniqueOrThrow({ where: { id: technician.id } })).teamId, null);
 });
 test('username é normalizado e duplicidade recusada', async () => {
   const input = {
@@ -273,6 +405,7 @@ test('desativar preserva histórico e impede novos atendimentos para o usuário'
   const ticket = await service.createTicket(user.id, {
     description: 'Preservar este registro.',
     impact: 'PARCIAL',
+    teamId: tiTeam,
   });
   await service.updateUser(admin, user.id, {
     name: user.name,
@@ -541,4 +674,259 @@ test('redefinição de senha pelo ADMIN libera a troca de senha bloqueada', asyn
   await service.resetPassword(admin, user.id, 'Temporaria123');
   await changePassword(user.id, 'Temporaria123', 'NovaSenha123');
   assert.equal((await login(user.username, 'NovaSenha123')).mustChangePassword, false);
+});
+test('abertura comum exige equipe e grava a escolhida', async () => {
+  const input = { description: 'Tomada sem energia na bancada.', impact: 'BAIXO' };
+  await assert.rejects(service.createTicket(employee, input), /Selecione a equipe/);
+  const eletrica = await teamId(organizationId, 'ELETRICA');
+  const ticket = await service.createTicket(employee, { ...input, teamId: eletrica });
+  assert.equal(ticket.teamId, eletrica);
+  const foreignOrg = await db.organization.create({ data: { name: 'Equipes alheias' } });
+  await assert.rejects(
+    service.createTicket(employee, { ...input, teamId: await teamId(foreignOrg.id, 'TI') }),
+    /Selecione a equipe/,
+  );
+});
+test('atendimento rápido usa a equipe de quem registra; ADMIN escolhe', async () => {
+  const eletrica = await teamId(organizationId, 'ELETRICA');
+  const ti = await teamId(organizationId, 'TI');
+  const electrician = await makeUser('TI', { teamId: eletrica });
+  const input = { description: 'Disjuntor desarmando.', impact: 'BAIXO' as const };
+  const byElectrician = await service.createTicket(
+    electrician.id,
+    { ...input, teamId: ti },
+    employee,
+  );
+  assert.equal(byElectrician.teamId, eletrica);
+  await assert.rejects(service.createTicket(admin, input, employee), /Selecione a equipe/);
+  const before = await db.ticket.count();
+  await assert.rejects(
+    service.createTicket(admin, { ...input, teamId: 'equipe-inexistente' }, employee),
+    /Selecione a equipe/,
+  );
+  assert.equal(await db.ticket.count(), before);
+  const byAdmin = await service.createTicket(admin, { ...input, teamId: ti }, employee);
+  assert.equal(byAdmin.teamId, ti);
+});
+const notFound = (error: unknown) => error instanceof AppError && error.status === 404;
+const queueFilters = [
+  'todos',
+  'novos',
+  'meus',
+  'aguardando',
+  'atendimento',
+  'minha-espera',
+  'apoio',
+  'resolvidos-hoje',
+  'filtro-desconhecido',
+];
+const teamTicket = (team: string, description: string) =>
+  service.createTicket(employee, { description, impact: 'PARCIAL', teamId: team });
+test('técnico só vê a fila e o detalhe da própria equipe', async () => {
+  const marker = `Equipe ${randomBytes(4).toString('hex')}`;
+  const tiNew = await teamTicket(tiTeam, `${marker} rede caiu`);
+  const tiWaiting = await teamTicket(tiTeam, `${marker} impressora`);
+  await service.claimTicket(tech, tiWaiting.id);
+  await service.changeStatus(tech, tiWaiting.id, { status: 'AGUARDANDO', waitingReason: 'PECA' });
+  const eletrica = await teamTicket(eletricaTeam, `${marker} tomada queimada`);
+  for (const filter of queueFilters) {
+    const result = await service.listTickets(eletricista, filter, 1, { q: marker });
+    assert.ok(
+      !result.tickets.some((t) => t.teamId === tiTeam),
+      `eletricista vê chamado da TI em ${filter}`,
+    );
+    const asTech = await service.listTickets(tech, filter, 1, { q: marker, teamId: eletricaTeam });
+    assert.ok(
+      !asTech.tickets.some((t) => t.id === eletrica.id),
+      `técnico da TI vê chamado da Elétrica em ${filter}`,
+    );
+  }
+  assert.deepEqual(
+    (await service.listTickets(eletricista, 'todos', 1, { q: marker })).tickets.map((t) => t.id),
+    [eletrica.id],
+  );
+  assert.equal((await service.listTickets(tech, 'todos', 1, { q: marker })).total, 2);
+  for (const ticket of [tiNew, tiWaiting]) {
+    await assert.rejects(service.getTicket(eletricista, ticket.id), notFound);
+    await assert.rejects(service.addComment(eletricista, ticket.id, 'Intrusão'), notFound);
+    await assert.rejects(
+      service.classifyTicket(eletricista, ticket.id, { categoryId: null, complexity: 'BAIXA' }),
+      notFound,
+    );
+    await assert.rejects(
+      service.relocateTicket(eletricista, ticket.id, { companyId: primaryCompanyId }),
+      notFound,
+    );
+  }
+  assert.equal(await db.ticketComment.count({ where: { ticketId: tiNew.id } }), 0);
+  assert.equal((await db.ticket.findUniqueOrThrow({ where: { id: tiNew.id } })).complexity, null);
+  const byTeam = await service.listTickets(admin, 'todos', 1, { q: marker, teamId: eletricaTeam });
+  assert.deepEqual(
+    byTeam.tickets.map((t) => t.id),
+    [eletrica.id],
+  );
+  assert.equal((await service.listTickets(admin, 'todos', 1, { q: marker })).total, 3);
+  const detail = await service.getTicket(eletricista, eletrica.id);
+  assert.deepEqual(detail.team, { id: eletricaTeam, key: 'ELETRICA', name: 'Elétrica' });
+});
+test('busca por número não revela chamado de outra equipe', async () => {
+  const ticket = await teamTicket(tiTeam, 'Monitor sem imagem.');
+  const q = ticketNumber(ticket.number);
+  assert.equal((await service.listTickets(eletricista, 'todos', 1, { q })).total, 0);
+  assert.equal((await service.listTickets(eletricista, 'novos', 1, { q })).total, 0);
+  assert.equal((await service.listTickets(tech, 'todos', 1, { q })).total, 1);
+});
+test('ajudante de outra equipe vê e comenta só o chamado em que está, e perde acesso ao sair', async () => {
+  const ticket = await teamTicket(tiTeam, 'Quadro elétrico da sala de servidores.');
+  const otherTicket = await teamTicket(tiTeam, 'Outro chamado da TI.');
+  await service.claimTicket(tech, ticket.id);
+  await service.setSupport(tech, ticket.id, eletricista, true);
+  assert.equal((await service.getTicket(eletricista, ticket.id)).id, ticket.id);
+  for (const filter of ['apoio', 'meus'])
+    assert.ok(
+      (await service.listTickets(eletricista, filter)).tickets.some((t) => t.id === ticket.id),
+      filter,
+    );
+  await service.addComment(eletricista, ticket.id, 'Disjuntor verificado.');
+  await assert.rejects(service.getTicket(eletricista, otherTicket.id), notFound);
+  await assert.rejects(service.getTicket(eletricista2, ticket.id), notFound);
+  await service.setSupport(tech, ticket.id, eletricista, false);
+  await assert.rejects(service.getTicket(eletricista, ticket.id), notFound);
+  await assert.rejects(service.addComment(eletricista, ticket.id, 'Depois de sair'), notFound);
+  for (const filter of ['apoio', 'meus'])
+    assert.ok(
+      !(await service.listTickets(eletricista, filter)).tickets.some((t) => t.id === ticket.id),
+      filter,
+    );
+});
+test('assumir e transferir só dentro da equipe do chamado', async () => {
+  const ticket = await teamTicket(tiTeam, 'Computador do caixa travado.');
+  await assert.rejects(service.claimTicket(eletricista, ticket.id));
+  assert.equal((await db.ticket.findUniqueOrThrow({ where: { id: ticket.id } })).status, 'NOVO');
+  await service.claimTicket(tech, ticket.id);
+  await assert.rejects(
+    service.assignTicket(tech, ticket.id, eletricista),
+    /Selecione um técnico ativo da equipe do chamado/,
+  );
+  await service.assignTicket(tech, ticket.id, tech2);
+  await service.assignTicket(tech2, ticket.id, admin);
+  const final = await db.ticket.findUniqueOrThrow({ where: { id: ticket.id } });
+  assert.equal(final.assigneeId, admin);
+  const eletrica = await teamTicket(eletricaTeam, 'Lâmpada piscando.');
+  await assert.rejects(service.claimTicket(tech, eletrica.id));
+  await service.claimTicket(eletricista, eletrica.id);
+  await service.assignTicket(eletricista, eletrica.id, eletricista2);
+});
+const forbidden = (error: unknown) => error instanceof AppError && error.status === 403;
+test('responsável ou ADMIN move o chamado para a outra equipe, que o recebe como novo', async () => {
+  const category = await db.category.create({
+    data: { organizationId, teamId: tiTeam, name: `Rede ${randomBytes(4).toString('hex')}` },
+  });
+  const ticket = await teamTicket(tiTeam, 'Na verdade é a tomada do computador.');
+  await service.claimTicket(tech, ticket.id);
+  await service.classifyTicket(tech, ticket.id, { categoryId: category.id, complexity: 'MEDIA' });
+  await service.changeStatus(tech, ticket.id, { status: 'AGUARDANDO', waitingReason: 'PECA' });
+  await service.setSupport(tech, ticket.id, eletricista, true);
+  await service.moveTicketTeam(tech, ticket.id, eletricaTeam);
+  const final = await db.ticket.findUniqueOrThrow({
+    where: { id: ticket.id },
+    include: { participants: true },
+  });
+  assert.equal(final.status, 'NOVO');
+  assert.equal(final.assigneeId, null);
+  assert.equal(final.startedAt, null);
+  assert.equal(final.waitingReason, null);
+  assert.equal(final.waitingNote, null);
+  assert.equal(final.categoryId, null);
+  assert.equal(final.teamId, eletricaTeam);
+  assert.deepEqual(
+    final.participants.map((p) => p.userId),
+    [eletricista],
+  );
+  const last = await db.ticketEvent.findFirstOrThrow({
+    where: { ticketId: ticket.id },
+    orderBy: { sequence: 'desc' },
+  });
+  assert.equal(last.type, 'EQUIPE_ALTERADA');
+  assert.equal(last.actorId, tech);
+  assert.equal(last.fromStatus, 'AGUARDANDO');
+  assert.equal(last.toStatus, 'NOVO');
+  assert.equal(last.previousCategoryId, category.id);
+  assert.equal(last.nextCategoryId, null);
+  assert.deepEqual(last.metadata, {
+    previousTeamId: tiTeam,
+    nextTeamId: eletricaTeam,
+    previousAssigneeId: tech,
+    previousCategoryId: category.id,
+  });
+  // The old team loses access; the support technician keeps it.
+  await assert.rejects(service.getTicket(tech, ticket.id), notFound);
+  assert.equal((await service.getTicket(eletricista, ticket.id)).id, ticket.id);
+  // ADMIN moves a NOVO ticket back.
+  await service.moveTicketTeam(admin, ticket.id, tiTeam);
+  assert.equal((await db.ticket.findUniqueOrThrow({ where: { id: ticket.id } })).teamId, tiTeam);
+});
+test('não move para a mesma equipe, nem chamado resolvido, nem quem não é responsável', async () => {
+  const ticket = await teamTicket(tiTeam, 'Teclado sem resposta.');
+  await service.claimTicket(tech, ticket.id);
+  await service.setSupport(tech, ticket.id, eletricista, true);
+  await assert.rejects(service.moveTicketTeam(tech, ticket.id, tiTeam), /já é desta equipe/);
+  await assert.rejects(service.moveTicketTeam(tech2, ticket.id, eletricaTeam), forbidden);
+  await assert.rejects(service.moveTicketTeam(eletricista, ticket.id, eletricaTeam), forbidden);
+  await assert.rejects(service.moveTicketTeam(employee, ticket.id, eletricaTeam));
+  await assert.rejects(service.moveTicketTeam(tech, ticket.id, 'equipe-inexistente'), /equipe/);
+  await service.changeStatus(tech, ticket.id, { status: 'RESOLVIDO' });
+  await assert.rejects(
+    service.moveTicketTeam(admin, ticket.id, eletricaTeam),
+    /resolvido não pode mudar de equipe/,
+  );
+  const final = await db.ticket.findUniqueOrThrow({ where: { id: ticket.id } });
+  assert.equal(final.teamId, tiTeam);
+  assert.equal(final.status, 'RESOLVIDO');
+  assert.ok(!(await eventTypes(ticket.id)).includes('EQUIPE_ALTERADA'));
+});
+test('após mover, só a nova equipe assume; mudanças concorrentes geram um único evento', async () => {
+  const ticket = await teamTicket(tiTeam, 'Disjuntor do rack desarmando.');
+  await service.moveTicketTeam(admin, ticket.id, eletricaTeam);
+  await assert.rejects(service.claimTicket(tech, ticket.id));
+  await service.claimTicket(eletricista, ticket.id);
+  assert.equal(
+    (await db.ticket.findUniqueOrThrow({ where: { id: ticket.id } })).assigneeId,
+    eletricista,
+  );
+  for (let round = 0; round < RACE_ROUNDS; round++) {
+    const raced = await teamTicket(tiTeam, `Corrida de equipe ${round}`);
+    const results = await Promise.allSettled([
+      service.moveTicketTeam(admin, raced.id, eletricaTeam),
+      service.moveTicketTeam(admin, raced.id, eletricaTeam),
+    ]);
+    assert.equal(results.filter((r) => r.status === 'fulfilled').length, 1, `rodada ${round}`);
+    const refused = results.find((r) => r.status === 'rejected')!;
+    assert.ok(refused.reason instanceof AppError, `rodada ${round}: ${refused.reason}`);
+    assert.deepEqual(await eventTypes(raced.id), ['CRIADO', 'EQUIPE_ALTERADA'], `rodada ${round}`);
+  }
+});
+test('quem era apoio e assume o chamado movido deixa de ser apoio, com evento', async () => {
+  const ticket = await teamTicket(tiTeam, 'Fiação do switch esquentando.');
+  await service.claimTicket(tech, ticket.id);
+  await service.setSupport(tech, ticket.id, eletricista, true);
+  await service.moveTicketTeam(tech, ticket.id, eletricaTeam);
+  await service.claimTicket(eletricista, ticket.id);
+  assert.equal(await db.ticketParticipant.count({ where: { ticketId: ticket.id } }), 0);
+  assert.deepEqual(await eventTypes(ticket.id), [
+    'CRIADO',
+    'ASSUMIDO',
+    'APOIO_ADICIONADO',
+    'EQUIPE_ALTERADA',
+    'APOIO_REMOVIDO',
+    'ASSUMIDO',
+  ]);
+  const removed = await db.ticketEvent.findFirstOrThrow({
+    where: { ticketId: ticket.id, type: 'APOIO_REMOVIDO' },
+  });
+  assert.equal(removed.actorId, eletricista);
+  assert.equal(removed.targetUserId, eletricista);
+  assert.ok(
+    !(await service.listTickets(eletricista, 'apoio')).tickets.some((t) => t.id === ticket.id),
+  );
 });

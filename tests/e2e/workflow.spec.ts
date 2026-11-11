@@ -27,7 +27,13 @@ async function logout(page: Page) {
   await page.getByRole('button', { name: 'Sair', exact: true }).click();
   await expect(page).toHaveURL(/\/login$/);
 }
-async function createUser(page: Page, name: string, username: string, role: string) {
+async function createUser(
+  page: Page,
+  name: string,
+  username: string,
+  role: string,
+  team?: 'TI' | 'Elétrica',
+) {
   await page.goto('/admin/usuarios/novo');
   await page.getByLabel('Nome completo').fill(name);
   await page.getByLabel('Username', { exact: true }).fill(username);
@@ -35,6 +41,10 @@ async function createUser(page: Page, name: string, username: string, role: stri
     .getByLabel('Setor', { exact: true })
     .selectOption({ label: role === 'TI' ? 'TI' : 'Financeiro' });
   await page.getByLabel('Perfil de acesso').selectOption(role);
+  if (role === 'TI') {
+    await expect(page.getByLabel('Perfil de acesso')).toContainText('Técnico');
+    await page.getByLabel('Equipe', { exact: true }).selectOption({ label: team! });
+  } else await expect(page.getByLabel('Equipe', { exact: true })).toHaveCount(0);
   if (role === 'FUNCIONARIO')
     await page
       .getByLabel('Filial (opcional)', { exact: true })
@@ -93,6 +103,7 @@ test('cenário completo no navegador: admin, funcionário, TI, histórico e aten
   await expect(page.getByRole('heading', { name: 'Depósito E2E', exact: true })).toBeVisible();
   await accessible(page);
   await page.goto('/admin/categorias');
+  await page.getByLabel('Equipe', { exact: true }).selectOption({ label: 'TI' });
   await page.getByLabel('Nome da categoria', { exact: true }).fill('E2E Rede');
   await page.getByRole('button', { name: 'Criar categoria', exact: true }).click();
   await expect(page.getByRole('status')).toContainText('Categoria salva');
@@ -106,8 +117,12 @@ test('cenário completo no navegador: admin, funcionário, TI, histórico e aten
   await page.goto('/gestor');
   await expect(page.getByRole('heading', { name: 'Panorama do suporte' })).toBeVisible();
   await createUser(page, 'Ana Financeiro', 'ana.financeiro', 'FUNCIONARIO');
-  await createUser(page, 'Bruno Técnico', 'bruno.ti', 'TI');
-  await createUser(page, 'Carla Técnica', 'carla.ti', 'TI');
+  await createUser(page, 'Bruno Técnico', 'bruno.ti', 'TI', 'TI');
+  await createUser(page, 'Carla Técnica', 'carla.ti', 'TI', 'TI');
+  await page.goto('/admin/usuarios/novo');
+  await page.getByLabel('Perfil de acesso').selectOption('TI');
+  await accessible(page);
+  await createUser(page, 'Eduardo Eletricista', 'eduardo.eletrica', 'TI', 'Elétrica');
   await createUser(page, 'Gustavo Gestor', 'gustavo.gestor', 'GESTOR');
   await page.screenshot({ path: 'test-results/screenshots/admin-desktop.png', fullPage: true });
   await accessible(page);
@@ -131,15 +146,38 @@ test('cenário completo no navegador: admin, funcionário, TI, histórico e aten
   expect((await page.request.get('/api/pessoas')).status()).toBe(403);
   await page.goto('/chamados/novo');
   await expect(page.getByLabel('Onde está o problema?')).toHaveCount(0);
+  const teamGroup = page.getByRole('group', { name: 'Para qual equipe é o chamado?' });
+  await expect(teamGroup.getByRole('radio')).toHaveCount(2);
+  await expect(teamGroup.getByRole('radio', { name: /^TI/ })).not.toBeChecked();
+  await expect(teamGroup.getByRole('radio', { name: /^Elétrica/ })).not.toBeChecked();
+  await expect(page.getByText('A equipe escolhida receberá seu chamado.')).toBeVisible();
+  await accessible(page);
   await page
     .getByLabel('O que aconteceu?')
     .fill('Não consigo abrir o sistema financeiro para concluir os pagamentos.');
   await expect(page.getByLabel('Categoria técnica')).toHaveCount(0);
   await page.getByLabel('Estou bloqueado').check();
+  // A escolha da equipe é obrigatória: sem ela o chamado não é enviado.
+  await page.getByRole('button', { name: 'Enviar chamado' }).click();
+  await expect(page).toHaveURL(/\/chamados\/novo/);
+  await teamGroup.getByRole('radio', { name: /^TI/ }).check();
   await page.getByRole('button', { name: 'Enviar chamado' }).click();
   await expect(page.getByRole('status')).toContainText('Chamado registrado');
   const ticketUrl = page.url().split('?')[0];
   await expect(page.getByText('Novo', { exact: true })).toBeVisible();
+  await page.goto('/chamados/novo');
+  await page
+    .getByLabel('O que aconteceu?')
+    .fill('Tomada da bancada do financeiro está soltando faíscas.');
+  await page.getByLabel('Estou bloqueado').check();
+  await page
+    .getByRole('group', { name: 'Para qual equipe é o chamado?' })
+    .getByRole('radio', { name: /^Elétrica/ })
+    .check();
+  await page.getByRole('button', { name: 'Enviar chamado' }).click();
+  await expect(page.getByRole('status')).toContainText('Chamado registrado');
+  const electricUrl = page.url().split('?')[0];
+  await expect(page.getByText('Elétrica', { exact: true }).first()).toBeVisible();
   await logout(page);
   await firstLogin(page, 'bruno.ti', temporary);
   await page.setViewportSize({ width: 1440, height: 1000 });
@@ -152,6 +190,10 @@ test('cenário completo no navegador: admin, funcionário, TI, histórico e aten
   await expect(page.getByText('Mais filtros', { exact: true })).toBeVisible();
   expect(await page.locator('.mobile-nav a').count()).toBeLessThanOrEqual(5);
   await expect(page.locator('.mobile-nav a[aria-current="page"]')).toHaveText('Chamados');
+  await expect(
+    page.getByRole('link').filter({ hasText: 'Não consigo abrir o sistema financeiro' }),
+  ).toBeVisible();
+  await expect(page.getByText('Tomada da bancada do financeiro')).toHaveCount(0);
   await page
     .getByRole('link')
     .filter({ hasText: 'Não consigo abrir o sistema financeiro' })
@@ -179,7 +221,7 @@ test('cenário completo no navegador: admin, funcionário, TI, histórico e aten
   await expect(page.getByText('Em atendimento', { exact: true })).toBeVisible();
   await page
     .getByLabel('Adicionar apoio', { exact: true })
-    .selectOption({ label: 'Carla Técnica' });
+    .selectOption({ label: 'Carla Técnica · TI' });
   await page.getByRole('button', { name: 'Adicionar apoio', exact: true }).click();
   await expect(page.locator('.support-person')).toContainText('Carla Técnica');
   await page
@@ -263,6 +305,33 @@ test('cenário completo no navegador: admin, funcionário, TI, histórico e aten
   await page.goto('/chamados?q=João%20-%20Reposição');
   await expect(page.locator('.ticket-row')).toContainText('João - Reposição');
   await logout(page);
+  await firstLogin(page, 'eduardo.eletrica', temporary);
+  await page.goto('/chamados?filtro=novos');
+  await expect(page.getByText('Tomada da bancada do financeiro')).toBeVisible();
+  await expect(page.getByText('Não consigo abrir o sistema financeiro')).toHaveCount(0);
+  await expect(page.getByText('Coletor não conecta no Wi-Fi.')).toHaveCount(0);
+  await page.goto(ticketUrl);
+  await expect(page.getByRole('heading', { name: 'Não encontramos este registro.' })).toBeVisible();
+  await page.goto(electricUrl);
+  await expect(page.getByText('Elétrica', { exact: true }).first()).toBeVisible();
+  await page.getByRole('button', { name: 'Assumir chamado' }).click();
+  await expect(page.getByText('Em atendimento', { exact: true })).toBeVisible();
+  await page
+    .getByLabel('Adicionar apoio', { exact: true })
+    .selectOption({ label: 'Bruno Técnico · TI' });
+  await page.getByRole('button', { name: 'Adicionar apoio', exact: true }).click();
+  await expect(page.locator('.support-person')).toContainText('Bruno Técnico');
+  await logout(page);
+  await login(page, 'bruno.ti', finalPassword);
+  await page.goto(electricUrl);
+  await expect(page.getByText('Tomada da bancada do financeiro')).toBeVisible();
+  await expect(page.locator('.assignee-name')).toHaveText('Eduardo Eletricista');
+  await expect(page.getByRole('button', { name: 'Assumir chamado' })).toHaveCount(0);
+  await page.goto('/chamados?filtro=apoio');
+  await expect(page.getByText('Tomada da bancada do financeiro')).toBeVisible();
+  await page.goto('/chamados');
+  await expect(page.getByText('Tomada da bancada do financeiro')).toHaveCount(0);
+  await logout(page);
   await firstLogin(page, 'gustavo.gestor', temporary);
   await expect(page.getByRole('heading', { name: 'Panorama do suporte' })).toBeVisible();
   await page.goto('/admin/usuarios');
@@ -299,8 +368,13 @@ test('cenário completo no navegador: admin, funcionário, TI, histórico e aten
   expect(csv.status()).toBe(200);
   expect(csv.headers()['content-type']).toContain('text/csv');
   expect(await csv.text()).toContain('E2E Rede / Internet');
-  await page.getByRole('link', { name: 'Equipe de TI', exact: true }).click();
-  await expect(page.getByRole('heading', { name: 'Equipe de TI', exact: true })).toBeVisible();
+  const pdfLink = await page.getByRole('link', { name: 'Baixar PDF' }).getAttribute('href');
+  const pdf = await page.request.get(pdfLink!);
+  expect(pdf.status()).toBe(200);
+  expect(pdf.headers()['content-type']).toContain('application/pdf');
+  expect((await pdf.body()).subarray(0, 5).toString()).toBe('%PDF-');
+  await page.getByRole('link', { name: 'Equipe técnica', exact: true }).click();
+  await expect(page.getByRole('heading', { name: 'Equipe técnica', exact: true })).toBeVisible();
   await page.getByRole('link', { name: 'Bruno Técnico', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Bruno Técnico', exact: true })).toBeVisible();
   await expect(page.getByText('Participou como apoio', { exact: true })).toBeVisible();

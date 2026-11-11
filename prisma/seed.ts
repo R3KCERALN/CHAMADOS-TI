@@ -20,6 +20,9 @@ async function main() {
       update: {},
     });
   }
+  const team = await db.team.findUniqueOrThrow({
+    where: { organizationId_key: { organizationId, key: 'TI' } },
+  });
   for (const name of [
     'Acesso / Senha',
     'Hardware',
@@ -34,10 +37,10 @@ async function main() {
   ]) {
     if (
       !(await db.category.findFirst({
-        where: { organizationId, name: { equals: name, mode: 'insensitive' } },
+        where: { teamId: team.id, name: { equals: name, mode: 'insensitive' } },
       }))
     )
-      await db.category.create({ data: { name, organizationId } });
+      await db.category.create({ data: { name, organizationId, teamId: team.id } });
   }
   // Bootstrap only: never reset credentials or promote an existing account on repeat runs.
   if (await db.user.count({ where: { role: 'ADMIN', organizationId } })) {

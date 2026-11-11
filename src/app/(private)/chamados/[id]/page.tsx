@@ -33,6 +33,14 @@ import {
   statusLabels,
   complexityLabels,
 } from '@/lib/labels';
+// Team ids are stored in the event metadata; the names come from the organization's teams.
+function teamMove(metadata: unknown, names: Map<string, string>) {
+  if (!metadata || typeof metadata !== 'object') return null;
+  const { previousTeamId, nextTeamId } = metadata as Record<string, unknown>;
+  const name = (teamId: unknown) =>
+    (typeof teamId === 'string' && names.get(teamId)) || 'outra equipe';
+  return `de ${name(previousTeamId)} para ${name(nextTeamId)}`;
+}
 function Hidden({ id, intent }: { id: string; intent: string }) {
   return (
     <>
@@ -63,24 +71,54 @@ export default async function TicketPage({
   const companies = tech ? await locationOptions(user.id) : [];
   const manage = user.role === 'ADMIN' || (user.role === 'TI' && ticket.assigneeId === user.id);
   const editable = manage && !!ticket.assigneeId && ticket.status !== 'RESOLVIDO';
-  const technicians = editable
-    ? await db.user.findMany({
-        where: {
-          organizationId: user.organizationId,
-          role: 'TI',
-          active: true,
-          id: { not: ticket.assigneeId! },
-        },
-        select: { id: true, name: true },
-        orderBy: { name: 'asc' },
-      })
-    : [];
-  const available = technicians.filter((t) => !ticket.participants.some((p) => p.userId === t.id));
+  // Only the ticket's team (or an ADMIN) can claim; a support technician of the other team cannot.
+  const canClaim = user.role === 'ADMIN' || (user.role === 'TI' && user.teamId === ticket.teamId);
+  const [technicians, supportCandidates] = editable
+    ? await Promise.all([
+        // Principal: an ADMIN or a technician of the ticket's team.
+        db.user.findMany({
+          where: {
+            organizationId: user.organizationId,
+            active: true,
+            id: { not: ticket.assigneeId! },
+            OR: [{ role: 'ADMIN' }, { role: 'TI', teamId: ticket.teamId }],
+          },
+          select: { id: true, name: true },
+          orderBy: { name: 'asc' },
+        }),
+        // Support: any active technician of the organization, from either team.
+        db.user.findMany({
+          where: {
+            organizationId: user.organizationId,
+            role: 'TI',
+            active: true,
+            id: { not: ticket.assigneeId! },
+          },
+          select: { id: true, name: true, team: { select: { name: true } } },
+          orderBy: { name: 'asc' },
+        }),
+      ])
+    : [[], []];
+  const available = supportCandidates.filter(
+    (t) => !ticket.participants.some((p) => p.userId === t.id),
+  );
   const created = search.criado;
+  // Also for the requester: the timeline shows the team move by name.
+  const teams = await db.team.findMany({
+    where: { organizationId: user.organizationId },
+    select: { id: true, name: true, active: true },
+  });
+  const teamNames = new Map(teams.map((t) => [t.id, t.name]));
+  // The principal or an ADMIN can send an unresolved ticket to the other (active) team.
+  const moveTarget =
+    manage && ticket.status !== 'RESOLVIDO'
+      ? teams.find((t) => t.active && t.id !== ticket.teamId)
+      : undefined;
   const categories = tech
     ? await db.category.findMany({
         where: {
           organizationId: user.organizationId,
+          teamId: ticket.teamId,
           OR: [{ active: true }, ...(ticket.categoryId ? [{ id: ticket.categoryId }] : [])],
         },
         orderBy: { name: 'asc' },
@@ -97,7 +135,8 @@ export default async function TicketPage({
         <div>
           <span className="eyebrow">
             {ticketNumber(ticket.number)} <span className="separator">/</span>{' '}
-            {ticket.origin === 'ATENDIMENTO_RAPIDO' ? 'ATENDIMENTO RÁPIDO' : 'CHAMADO'}
+            {ticket.origin === 'ATENDIMENTO_RAPIDO' ? 'ATENDIMENTO RÁPIDO' : 'CHAMADO'}{' '}
+            <span className="separator">/</span> EQUIPE {ticket.team.name.toUpperCase()}
           </span>
           <h1>Detalhes do atendimento</h1>
           <p>Aberto em {formatDate(ticket.createdAt)}</p>
@@ -139,13 +178,13 @@ export default async function TicketPage({
               </p>
             )}
           </section>
-          {tech && (ticket.status === 'NOVO' || editable) && (
+          {tech && ((ticket.status === 'NOVO' && canClaim) || editable) && (
             <section className="panel padded primary-actions">
               <div className="section-title">
                 <ArrowRightLeft size={19} />
                 <h2>Próximo passo</h2>
               </div>
-              {ticket.status === 'NOVO' && (
+              {ticket.status === 'NOVO' && canClaim && (
                 <ActionForm action={ticketAction}>
                   <Hidden id={id} intent="claim" />
                   <Submit>Assumir chamado</Submit>
@@ -231,6 +270,20 @@ export default async function TicketPage({
                   </details>
                 </>
               )}
+              {moveTarget && (
+                <details className="action-details">
+                  <summary>Mudar de equipe</summary>
+                  <ActionForm action={ticketAction}>
+                    <Hidden id={id} intent="team-move" />
+                    <input type="hidden" name="teamId" value={moveTarget.id} />
+                    <p className="muted small">
+                      O chamado volta como novo, sem responsável, para a equipe {moveTarget.name}. A
+                      categoria técnica é limpa e os técnicos de apoio continuam.
+                    </p>
+                    <Submit className="button secondary">Mover para {moveTarget.name}</Submit>
+                  </ActionForm>
+                </details>
+              )}
             </section>
           )}
           <section className="panel padded">
@@ -309,7 +362,10 @@ export default async function TicketPage({
                         {formatDate(event.createdAt)}
                       </time>
                     </p>
-                    {event.fromStatus && event.toStatus && (
+                    {event.type === 'EQUIPE_ALTERADA' && (
+                      <p className="event-detail">{teamMove(event.metadata, teamNames)}</p>
+                    )}
+                    {event.fromStatus && event.toStatus && event.fromStatus !== event.toStatus && (
                       <p className="event-detail">
                         {statusLabels[event.fromStatus]} → {statusLabels[event.toStatus]}
                       </p>
@@ -363,6 +419,10 @@ export default async function TicketPage({
                   {ticket.unit && ` · ${ticket.unit.name}`}
                 </strong>
                 {ticket.company && <small>CNPJ {formatCnpj(ticket.company.cnpj)}</small>}
+              </div>
+              <div>
+                <span>Equipe</span>
+                <strong>{ticket.team.name}</strong>
               </div>
               <div>
                 <span>Registrado por</span>
@@ -485,7 +545,7 @@ export default async function TicketPage({
                     </option>
                     {available.map((t) => (
                       <option key={t.id} value={t.id}>
-                        {t.name}
+                        {t.team ? `${t.name} · ${t.team.name}` : t.name}
                       </option>
                     ))}
                   </select>

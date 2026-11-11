@@ -9,6 +9,7 @@ import {
 } from '@/lib/analytics-service';
 import { queryString, type SearchParams } from '@/lib/period';
 import { ManagementFilters } from '@/components/management/filters';
+import { PdfLink } from '@/components/management/pdf-link';
 import { Pagination } from '@/components/pagination';
 import { complexityLabels } from '@/lib/labels';
 export default async function TeamPage({ searchParams }: { searchParams: Promise<SearchParams> }) {
@@ -30,14 +31,15 @@ export default async function TeamPage({ searchParams }: { searchParams: Promise
       <div className="page-heading">
         <div>
           <span className="eyebrow">GESTÃO · EQUIPE</span>
-          <h1>Equipe de TI</h1>
+          <h1>Equipe técnica</h1>
           <p>Responsabilidades, apoios e carga atual. Sem pontuação ou comparação competitiva.</p>
         </div>
+        <PdfLink screen="equipe" params={params} />
       </div>
       <ManagementFilters options={options} values={values} />
       <p className="report-caption">
-        {describeFilters(data.filters)} · Ordem alfabética. Técnicos ativos e pessoas com atuação
-        histórica ou pendências.
+        {describeFilters(data.filters, options.teams.find((t) => t.id === data.filters.team)?.name)}{' '}
+        · Ordem alfabética. Técnicos ativos e pessoas com atuação histórica ou pendências.
       </p>
       <section className="panel list-panel">
         <div className="table-scroll">

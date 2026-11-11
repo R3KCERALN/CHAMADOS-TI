@@ -114,3 +114,13 @@ A comparação de filiais mostra abertos no período, resolvidos no período, ba
 CSV conserva o recorte de abertos OU resolvidos no período, inclusive quando acessado da consulta de pendências (botão “Exportar período CSV”). Inclui filial, CNPJ normalizado, unidade, registrador, nome atual do solicitante cadastrado, nome manual quando aplicável e **Solicitante**, o snapshot amigável preservado na abertura. Campos sem informação ficam vazios; Company ausente é “Sem filial”. A proteção contra fórmulas abrange todas as colunas.
 
 Nomes de Company/Unit vêm dos cadastros atuais; localização do Ticket pode ser corrigida por TI/ADMIN com evento. Não reconstruímos retroativamente a localização antes de cada correção. O snapshot do solicitante usa o nome na abertura (ou na migração para registros antigos). Dados sem conta têm o mesmo peso operacional dos demais chamados; não existe relatório individual de colaboradores sem acesso.
+
+## Equipes — V1.3
+
+O sistema tem duas equipes técnicas (TI e Elétrica). Cada chamado pertence a uma equipe e o CSV traz a coluna **Equipe**, logo depois do número.
+
+- **Filtro de equipe** (parâmetro `team`): usa a **equipe atual do chamado**, combinado com os demais filtros e sempre limitado à organização do ator. Vale para panorama, filiais, consulta de chamados, tela Equipe e CSV.
+- **Mover de equipe** devolve o chamado a NOVO, sem responsável, e registra `EQUIPE_ALTERADA` com o status anterior e NOVO. O intervalo anterior à mudança continua no histórico do chamado, portanto tempos de espera e ativo permanecem disponíveis. Apoios são mantidos.
+- **Primeira resposta** é o primeiro ASSUMIDO do chamado, seja qual for a equipe de quem assumiu; mover o chamado não a redefine.
+- **Tela Equipe:** o filtro recorta os **chamados**, não as pessoas. Aparecem os técnicos ativos da equipe filtrada e quem tem participação (principal, apoio ou carteira) nos chamados filtrados, inclusive técnicos de outra equipe que apoiaram. Sem filtro, vale a regra anterior.
+- **Histórico:** quem mudou de equipe segue a equipe de cada chamado; a atual do cadastro não reescreve chamados antigos. A participação principal da pessoa que tinha o chamado termina na mudança de equipe (evento `EQUIPE_ALTERADA`): o chamado volta sem responsável e não conta como responsabilidade dela nos períodos seguintes, mas o período da mudança continua contando.

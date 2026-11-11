@@ -63,6 +63,7 @@ export default async function UsersPage({
                 <th>Pessoa</th>
                 <th>Setor</th>
                 <th>Perfil</th>
+                <th>Equipe</th>
                 <th>Situação</th>
                 <th>
                   <span className="sr-only">Ações</span>
@@ -78,6 +79,7 @@ export default async function UsersPage({
                   </td>
                   <td>{person.department.name}</td>
                   <td>{roleLabels[person.role]}</td>
+                  <td>{person.team?.name ?? '—'}</td>
                   <td>
                     <span
                       className={`status ${person.active ? 'status-RESOLVIDO' : 'status-inactive'}`}

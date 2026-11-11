@@ -4,7 +4,7 @@ import { randomBytes } from 'node:crypto';
 import { db } from '../src/lib/db';
 import { APP_ORGANIZATION_ID } from '../src/lib/config';
 import { hashPassword, login, getSessionUser } from '../src/lib/auth-service';
-import { syntheticCnpj } from './fixtures';
+import { syntheticCnpj, teamId } from './fixtures';
 import { normalizeCnpj, validCnpj, formatCnpj } from '../src/lib/cnpj';
 import { saveCompany, saveUnit, locationOptions } from '../src/lib/organization-service';
 import * as services from '../src/lib/services';
@@ -34,9 +34,10 @@ let foreignOrg: string,
   foreignDepartment: string,
   foreignCategory: string,
   foreignTicket: string;
-let passwordHash: string;
+let passwordHash: string, tiTeam: string;
 before(async () => {
   assert.match(new URL(process.env.DATABASE_URL!).pathname, /^\/central_test_/);
+  tiTeam = await teamId(organizationId, 'TI');
   passwordHash = await hashPassword('123456');
   departmentId = (
     await db.department.create({ data: { organizationId, name: 'Organização ' + token() } })
@@ -67,6 +68,7 @@ before(async () => {
               username: 'org.' + token(),
               passwordHash,
               mustChangePassword: false,
+              ...(role === 'TI' && { teamId: await teamId(organizationId, 'TI') }),
             },
           })
         ).id,
@@ -85,7 +87,13 @@ before(async () => {
     await db.unit.create({ data: { companyId: foreignCompany, name: 'Unidade externa' } })
   ).id;
   foreignCategory = (
-    await db.category.create({ data: { organizationId: foreignOrg, name: 'Categoria externa' } })
+    await db.category.create({
+      data: {
+        organizationId: foreignOrg,
+        teamId: await teamId(foreignOrg, 'TI'),
+        name: 'Categoria externa',
+      },
+    })
   ).id;
   foreignAdmin = (
     await db.user.create({
@@ -105,6 +113,7 @@ before(async () => {
       description: 'Registro de outra organização.',
       impact: 'BAIXO',
       companyId: foreignCompany,
+      teamId: await teamId(foreignOrg, 'TI'),
     })
   ).id;
 });
@@ -113,6 +122,7 @@ const ticket = () =>
   services.createTicket(employee, {
     description: 'Abertura normal com localização automática.',
     impact: 'PARCIAL',
+    teamId: tiTeam,
   });
 const manual = () =>
   services.createTicket(tech, {
@@ -202,6 +212,7 @@ test('funcionário com várias Companies escolhe somente autorizadas', async () 
   await db.userCompanyAccess.create({ data: { userId: employee, companyId: secondCompanyId } });
   const t = await services.createTicket(employee, {
     description: 'Demanda no segundo local.',
+    teamId: tiTeam,
     impact: 'BAIXO',
     companyId: secondCompanyId,
     unitId,
@@ -212,6 +223,7 @@ test('funcionário com várias Companies escolhe somente autorizadas', async () 
   await assert.rejects(
     services.createTicket(employee, {
       description: 'Não autorizada.',
+      teamId: tiTeam,
       impact: 'BAIXO',
       companyId: denied.id,
     }),
@@ -223,6 +235,7 @@ test('restrição de Units é aplicada no servidor e nas opções do funcionári
   await assert.rejects(
     services.createTicket(employee, {
       description: 'Unidade não permitida.',
+      teamId: tiTeam,
       impact: 'BAIXO',
       companyId: secondCompanyId,
       unitId: otherUnitId,
@@ -236,6 +249,7 @@ test('restrição de Units é aplicada no servidor e nas opções do funcionári
   await assert.rejects(
     services.createTicket(employee, {
       description: 'Unidade de outra filial.',
+      teamId: tiTeam,
       impact: 'BAIXO',
       companyId,
       unitId,
@@ -359,6 +373,7 @@ test('dados históricos sem Company entram em Sem filial e no CSV', async () => 
   const t = await db.ticket.create({
     data: {
       organizationId,
+      teamId: await teamId(organizationId, 'TI'),
       requesterId: employee,
       requesterName: 'Histórico preservado',
       openedByUserId: employee,

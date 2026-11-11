@@ -11,11 +11,12 @@ import { operationalRevision } from '../src/lib/live-updates';
 import { validPushEndpoint } from '../src/lib/push-config';
 import { ticketReturnTo } from '../src/lib/return-to';
 import * as service from '../src/lib/services';
-import { syntheticCnpj } from './fixtures';
+import { syntheticCnpj, teamId } from './fixtures';
 import type { Role } from '../src/generated/prisma/client';
 const org = APP_ORGANIZATION_ID;
 let employee: string, tech: string, support: string, other: string, admin: string, foreign: string;
-let company: string, department: string, hash: string;
+let company: string, department: string, hash: string, tiTeam: string, eletricaTeam: string;
+let eletricista: string, eletricista2: string;
 const sessions = new Map<string, string>();
 const password = process.env.TEST_PASSWORD!;
 function subscription() {
@@ -30,7 +31,12 @@ function subscription() {
     },
   };
 }
-async function person(role: Role, organizationId = org, departmentId = department) {
+async function person(
+  role: Role,
+  organizationId = org,
+  departmentId = department,
+  team: 'TI' | 'ELETRICA' = 'TI',
+) {
   const user = await db.user.create({
     data: {
       organizationId,
@@ -40,6 +46,7 @@ async function person(role: Role, organizationId = org, departmentId = departmen
       username: `push.${randomBytes(6).toString('hex')}`,
       passwordHash: hash,
       mustChangePassword: false,
+      ...(role === 'TI' && { teamId: await teamId(organizationId, team) }),
       primaryCompanyId: organizationId === org ? company : null,
     },
   });
@@ -57,6 +64,7 @@ const open = () =>
   service.createTicket(employee, {
     description: 'Problema confidencial não deve aparecer no push',
     impact: 'PARCIAL',
+    teamId: tiTeam,
   });
 async function makeDue() {
   await db.pushDelivery.updateMany({
@@ -76,6 +84,8 @@ async function recipients(ticketId: string, type: string) {
 }
 before(async () => {
   assert.match(new URL(process.env.DATABASE_URL!).pathname, /^\/central_test_/);
+  tiTeam = await teamId(org, 'TI');
+  eletricaTeam = await teamId(org, 'ELETRICA');
   company = (
     await db.company.create({
       data: { organizationId: org, displayName: 'Filial Push', cnpj: syntheticCnpj() },
@@ -90,7 +100,12 @@ before(async () => {
   [employee, tech, support, other, admin] = await Promise.all(
     (['FUNCIONARIO', 'TI', 'TI', 'FUNCIONARIO', 'ADMIN'] as Role[]).map((r) => person(r)),
   );
-  for (const id of [employee, tech, support, other, admin]) await subscribe(id);
+  [eletricista, eletricista2] = await Promise.all([
+    person('TI', org, department, 'ELETRICA'),
+    person('TI', org, department, 'ELETRICA'),
+  ]);
+  for (const id of [employee, tech, support, other, admin, eletricista, eletricista2])
+    await subscribe(id);
   const foreignOrg = await db.organization.create({ data: { name: 'Outro cliente push' } });
   const dept = await db.department.create({
     data: { name: 'Outro', organizationId: foreignOrg.id },
@@ -144,15 +159,39 @@ test('subscription não aceita endpoints arbitrários, HTTP, credenciais ou chav
     }),
   );
 });
-test('novo chamado normal notifica TI ativos; autor, ADMIN e outra Organization não recebem', async () => {
+test('novo chamado normal notifica só os técnicos da equipe; autor, ADMIN e outra Organization não recebem', async () => {
   const ticket = await open();
+  assert.equal(ticket.teamId, tiTeam);
   assert.deepEqual(await recipients(ticket.id, 'CRIADO'), [support, tech].sort());
   const own = await service.createTicket(tech, {
     description: 'Solicitação do próprio TI',
     impact: 'BAIXO',
+    teamId: tiTeam,
     companyId: company,
   });
   assert.deepEqual(await recipients(own.id, 'CRIADO'), [support]);
+});
+test('chamado elétrico notifica só a Elétrica; mover avisa a nova equipe', async () => {
+  const electric = await service.createTicket(employee, {
+    description: 'Tomada em curto',
+    impact: 'PARCIAL',
+    teamId: eletricaTeam,
+  });
+  assert.deepEqual(await recipients(electric.id, 'CRIADO'), [eletricista, eletricista2].sort());
+  const moved = await open();
+  assert.deepEqual(await recipients(moved.id, 'CRIADO'), [support, tech].sort());
+  await service.claimTicket(tech, moved.id);
+  await service.moveTicketTeam(tech, moved.id, eletricaTeam);
+  assert.deepEqual(
+    await recipients(moved.id, 'EQUIPE_ALTERADA'),
+    [eletricista, eletricista2].sort(),
+  );
+  await service.claimTicket(eletricista, moved.id);
+  await service.moveTicketTeam(eletricista, moved.id, tiTeam);
+  assert.deepEqual(
+    await recipients(moved.id, 'EQUIPE_ALTERADA'),
+    [eletricista, eletricista2, support, tech].sort(),
+  );
 });
 test('atendimento rápido registrado ou textual não alerta toda a equipe nem cria conta', async () => {
   for (const textual of [false, true]) {
@@ -358,6 +397,34 @@ test('falha transitória agenda retry limitado e mudança de permissão cancela 
   });
   assert.equal(sends, 1);
   await db.user.update({ where: { id: tech }, data: { active: true } });
+});
+test('dispatcher cancela entrega quando o destinatário perde acesso pela equipe', async () => {
+  await makeDue();
+  while (await dispatchPushBatch(async () => {})) {
+    /* drain earlier fixtures */
+  }
+  const ticket = await open();
+  await makeDue();
+  while (await dispatchPushBatch(async () => {})) {
+    /* drain creation */
+  }
+  await service.claimTicket(tech, ticket.id);
+  await service.setSupport(tech, ticket.id, eletricista, true);
+  assert.deepEqual(await recipients(ticket.id, 'APOIO_ADICIONADO'), [eletricista]);
+  await service.setSupport(tech, ticket.id, eletricista, false);
+  await db.pushDelivery.updateMany({
+    where: { event: { ticketId: ticket.id, type: 'APOIO_ADICIONADO' } },
+    data: { availableAt: new Date(0) },
+  });
+  const sent: string[] = [];
+  while (await dispatchPushBatch(async (_, payload) => void sent.push(payload))) {
+    /* drain */
+  }
+  assert.deepEqual(sent, []);
+  const delivery = await db.pushDelivery.findFirstOrThrow({
+    where: { event: { ticketId: ticket.id, type: 'APOIO_ADICIONADO' } },
+  });
+  assert.equal(delivery.status, 'CANCELLED');
 });
 test('logout remove só os dispositivos da sessão; troca de senha desativa os demais', async () => {
   const user = await person('TI');

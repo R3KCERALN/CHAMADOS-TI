@@ -1,7 +1,7 @@
 import { before, after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
-import { syntheticCnpj } from './fixtures';
+import { syntheticCnpj, teamId } from './fixtures';
 import { APP_ORGANIZATION_ID } from '../src/lib/config';
 import { db } from '../src/lib/db';
 import { hashPassword, login, changePassword } from '../src/lib/auth-service';
@@ -16,9 +16,11 @@ import {
   changeStatus,
   getTicket,
   listTickets,
+  moveTicketTeam,
+  setSupport,
 } from '../src/lib/services';
 import { overview, teamReport, technicianDetail, exportRows } from '../src/lib/analytics-service';
-import { csvCell, csvRow } from '../src/lib/csv';
+import { csvCell, csvRow, csvHeader } from '../src/lib/csv';
 import { localMidnight, resolvePeriod } from '../src/lib/period';
 import type { Role, EventType, TicketStatus, WaitingReason } from '../src/generated/prisma/client';
 const now = new Date('2026-09-18T15:00:00Z');
@@ -32,8 +34,10 @@ let admin: string,
   primaryCompanyId: string;
 const organizationId = APP_ORGANIZATION_ID;
 const id = () => randomBytes(8).toString('hex');
+let tiTeam: string;
 before(async () => {
   assert.match(new URL(process.env.DATABASE_URL!).pathname, /^\/central_test_/);
+  tiTeam = await teamId(organizationId, 'TI');
   primaryCompanyId = (
     await db.company.create({
       data: {
@@ -60,6 +64,7 @@ before(async () => {
               departmentId,
               passwordHash: hash,
               mustChangePassword: false,
+              ...(role === 'TI' && { teamId: await teamId(organizationId, 'TI') }),
             },
           })
         ).id,
@@ -76,6 +81,7 @@ async function fixture(options: { transfer?: boolean; support?: boolean; pending
     data: {
       description: 'Atendimento de teste com períodos conhecidos.',
       organizationId,
+      teamId: await teamId(organizationId, 'TI'),
       requesterName: 'Pessoa histórica',
       requesterId: employee,
       departmentId: department,
@@ -151,10 +157,11 @@ test('senha/PIN de seis funciona em criação, reset e troca obrigatória com Ar
   await assert.rejects(changePassword(user.id, '456789', '12345'));
 });
 test('TI atribui categoria e complexidade com eventos; funcionário não classifica', async () => {
-  const category = await saveCategory(admin, { name: `Categoria ${id()}` });
+  const category = await saveCategory(admin, { name: `Categoria ${id()}`, teamId: tiTeam });
   const ticket = await createTicket(employee, {
     description: 'Preciso configurar uma impressora.',
     impact: 'BAIXO',
+    teamId: tiTeam,
   });
   await assert.rejects(
     classifyTicket(employee, ticket.id, { categoryId: category.id, complexity: 'ALTA' }),
@@ -171,6 +178,7 @@ test('TI atribui categoria e complexidade com eventos; funcionário não classif
   const next = await createTicket(employee, {
     description: 'Outra configuração.',
     impact: 'BAIXO',
+    teamId: tiTeam,
   });
   await assert.rejects(
     classifyTicket(tech, next.id, { categoryId: category.id, complexity: 'BAIXA' }),
@@ -289,6 +297,7 @@ test('mediana PostgreSQL não é distorcida por um único ciclo muito longo', as
       data: {
         description: 'Ciclo para teste de mediana.',
         organizationId,
+        teamId: await teamId(organizationId, 'TI'),
         requesterName: 'Pessoa histórica',
         requesterId: employee,
         departmentId: dept,
@@ -334,6 +343,7 @@ test('filtros da fila consultam número, descrição e solicitante no servidor',
   const t = await createTicket(employee, {
     description: `Busca específica ${id()}`,
     impact: 'BLOQUEADO',
+    teamId: tiTeam,
   });
   const result = await listTickets(tech, 'todos', 1, { q: `CS-${t.number}`, impact: 'BLOQUEADO' });
   assert.equal(result.total, 1);
@@ -347,6 +357,7 @@ test('timeline e comentários são paginados no servidor', async () => {
   const t = await createTicket(employee, {
     description: 'Paginação de auditoria.',
     impact: 'BAIXO',
+    teamId: tiTeam,
   });
   await db.ticketEvent.createMany({
     data: Array.from({ length: 35 }, () => ({
@@ -386,7 +397,7 @@ test('espera recortada ao período mantém apenas a interseção e a idade mant�
 });
 test('filtros combinados e paginação CSV por chave não duplicam chamados', async () => {
   const { filters, ticket } = await fixture();
-  const category = await saveCategory(admin, { name: `Exportação ${id()}` });
+  const category = await saveCategory(admin, { name: `Exportação ${id()}`, teamId: tiTeam });
   await classifyTicket(tech, ticket.id, { categoryId: category.id, complexity: 'CRITICA' });
   const combined = {
     ...filters,
@@ -406,6 +417,7 @@ test('fluxo real de atendimento gera tempos confiáveis até a resolução', asy
   const ticket = await createTicket(employee, {
     description: 'Validar relógios no fluxo real.',
     impact: 'BAIXO',
+    teamId: tiTeam,
   });
   await claimTicket(tech, ticket.id);
   await changeStatus(tech, ticket.id, { status: 'AGUARDANDO', waitingReason: 'USUARIO' });
@@ -454,7 +466,13 @@ test('fila de novos mostra o mais antigo primeiro; demais filas e funcionário, 
   const marker = `Ordem da fila ${id()}`;
   const created = [];
   for (const n of [1, 2, 3])
-    created.push(await createTicket(employee, { description: `${marker} #${n}`, impact: 'BAIXO' }));
+    created.push(
+      await createTicket(employee, {
+        description: `${marker} #${n}`,
+        impact: 'BAIXO',
+        teamId: tiTeam,
+      }),
+    );
   const ids = created.map((t) => t.id);
   const order = async (user: string, filter: string) =>
     (await listTickets(user, filter, 1, { q: marker })).tickets.map((t) => t.id);
@@ -465,4 +483,174 @@ test('fila de novos mostra o mais antigo primeiro; demais filas e funcionário, 
     (await order(employee, 'novos')).filter((x) => ids.includes(x)),
     [...ids].reverse(),
   );
+});
+test('categoria pertence a uma equipe e só classifica chamados dessa equipe', async () => {
+  const eletrica = await teamId(organizationId, 'ELETRICA');
+  const ti = await teamId(organizationId, 'TI');
+  const name = `Fiação ${id()}`;
+  const electrical = await saveCategory(admin, { name, teamId: eletrica });
+  assert.equal(electrical.teamId, eletrica);
+  const sameName = await saveCategory(admin, { name, teamId: ti });
+  assert.equal(sameName.teamId, ti);
+  await assert.rejects(saveCategory(admin, { name }), /Selecione a equipe/);
+  await assert.rejects(saveCategory(admin, { name, teamId: eletrica }), /Category_teamId_name/);
+  const renamed = await saveCategory(admin, { id: electrical.id, name: `${name} 2`, teamId: ti });
+  assert.equal(renamed.teamId, eletrica);
+  const ticket = await createTicket(employee, {
+    description: 'Computador sem rede.',
+    impact: 'BAIXO',
+    teamId: ti,
+  });
+  await assert.rejects(
+    classifyTicket(tech, ticket.id, { categoryId: electrical.id, complexity: null }),
+    /Selecione uma categoria ativa/,
+  );
+  await classifyTicket(tech, ticket.id, { categoryId: sameName.id, complexity: null });
+  assert.equal(
+    (await db.ticket.findUniqueOrThrow({ where: { id: ticket.id } })).categoryId,
+    sameName.id,
+  );
+});
+
+async function teamScenario() {
+  const eletrica = await teamId(organizationId, 'ELETRICA');
+  const department = (
+    await db.department.create({ data: { organizationId, name: `Equipes ${id()}` } })
+  ).id;
+  const hash = await hashPassword('123456');
+  const newUser = async (role: Role, team?: string, deptId = departmentId) =>
+    (
+      await db.user.create({
+        data: {
+          name: `Pessoa ${role} ${id()}`,
+          username: `test.${id()}`,
+          role,
+          organizationId,
+          primaryCompanyId,
+          departmentId: deptId,
+          passwordHash: hash,
+          mustChangePassword: false,
+          teamId: team,
+        },
+      })
+    ).id;
+  const requester = await newUser('FUNCIONARIO', undefined, department);
+  const [electrician, electrician2] = [
+    await newUser('TI', eletrica),
+    await newUser('TI', eletrica),
+  ];
+  const open = (teamId: string, text: string) =>
+    createTicket(requester, { description: `${text} ${id()}`, impact: 'BAIXO', teamId });
+  return { eletrica, department, requester, electrician, electrician2, open };
+}
+test('filtro de equipe recorta panorama, chamados e CSV pela equipe atual', async () => {
+  const { eletrica, department, open } = await teamScenario();
+  const [t1, t2] = [await open(tiTeam, 'Rede'), await open(tiTeam, 'Impressora')];
+  await open(eletrica, 'Tomada');
+  await claimTicket(tech, t1.id);
+  await moveTicketTeam(tech, t1.id, eletrica);
+  const input = { periodo: 'hoje', department };
+  const instant = new Date();
+  assert.equal((await overview(manager, { ...input, team: eletrica }, instant)).summary.opened, 2);
+  assert.equal((await overview(manager, { ...input, team: tiTeam }, instant)).summary.opened, 1);
+  assert.equal((await overview(manager, input, instant)).summary.opened, 3);
+  const rows = await exportRows(manager, { ...input, team: eletrica }, instant);
+  assert.equal(rows.length, 2);
+  assert.ok(rows.every((r) => r.team === 'Elétrica'));
+  assert.ok(!rows.some((r) => r.number === t2.number));
+  assert.equal((await exportRows(manager, input, instant)).length, 3);
+  assert.equal(
+    (await exportRows(manager, { ...input, team: tiTeam }, instant)).map((r) => r.team)[0],
+    'TI',
+  );
+});
+test('tela Equipe com filtro lista os técnicos da equipe e os apoios vindos de fora', async () => {
+  const { eletrica, department, electrician, electrician2, open } = await teamScenario();
+  const ticket = await open(eletrica, 'Quadro de energia');
+  await claimTicket(electrician, ticket.id);
+  await setSupport(electrician, ticket.id, tech, true);
+  const instant = new Date();
+  const report = await teamReport(
+    manager,
+    { periodo: 'hoje', department, team: eletrica },
+    instant,
+  );
+  const ids = report.rows.map((r) => r.id);
+  assert.ok(ids.includes(electrician));
+  assert.ok(ids.includes(electrician2));
+  assert.ok(ids.includes(tech));
+  assert.ok(!ids.includes(tech2));
+  assert.ok(!ids.includes(admin));
+  assert.equal(report.rows.find((r) => r.id === tech)!.support, 1);
+});
+test('chamado movido e resolvido mantém tempos confiáveis e a primeira resposta da equipe original', async () => {
+  const { eletrica, department, electrician, open } = await teamScenario();
+  const ticket = await open(tiTeam, 'Ponto de luz');
+  await claimTicket(tech, ticket.id);
+  await moveTicketTeam(tech, ticket.id, eletrica);
+  await claimTicket(electrician, ticket.id);
+  await changeStatus(electrician, ticket.id, { status: 'AGUARDANDO', waitingReason: 'USUARIO' });
+  await changeStatus(electrician, ticket.id, { status: 'EM_ATENDIMENTO' });
+  await changeStatus(electrician, ticket.id, { status: 'RESOLVIDO' });
+  const instant = new Date();
+  const input = { periodo: 'hoje', department, team: eletrica };
+  const [row] = await exportRows(manager, input, instant);
+  assert.equal(row.team, 'Elétrica');
+  assert.notEqual(row.waiting_seconds, null);
+  assert.notEqual(row.active_seconds, null);
+  const first = await db.ticketEvent.findFirstOrThrow({
+    where: { ticketId: ticket.id, type: 'ASSUMIDO' },
+    orderBy: { sequence: 'asc' },
+  });
+  assert.equal(row.first_response?.getTime(), first.createdAt.getTime());
+  assert.equal((await overview(manager, input, instant)).summary.incomplete, 0);
+});
+test('CSV tem coluna Equipe logo depois do número', () => {
+  assert.ok(csvHeader.startsWith('"Número";"Equipe"'));
+});
+test('mover de equipe encerra a participação principal de quem era o responsável', async () => {
+  const { eletrica, department } = await teamScenario();
+  const date = (h: number) => new Date(`2026-09-10T${String(h).padStart(2, '0')}:00:00Z`);
+  const ticket = await db.ticket.create({
+    data: {
+      description: 'Chamado movido para outra equipe.',
+      organizationId,
+      teamId: eletrica,
+      requesterName: 'Pessoa histórica',
+      requesterId: employee,
+      departmentId: department,
+      impact: 'PARCIAL',
+      status: 'NOVO',
+      createdAt: date(12),
+    },
+  });
+  const events = [
+    { type: 'CRIADO', at: 12, to: 'NOVO' },
+    { type: 'ASSUMIDO', at: 13, from: 'NOVO', to: 'EM_ATENDIMENTO', target: tech },
+    { type: 'EQUIPE_ALTERADA', at: 15, from: 'EM_ATENDIMENTO', to: 'NOVO' },
+  ] as const;
+  for (const e of events)
+    await db.ticketEvent.create({
+      data: {
+        ticketId: ticket.id,
+        actorId: tech,
+        type: e.type,
+        createdAt: date(e.at),
+        fromStatus: 'from' in e ? e.from : undefined,
+        toStatus: e.to,
+        targetUserId: 'target' in e ? e.target : undefined,
+      },
+    });
+  const principal = async (inicio: string, fim: string, team?: string) =>
+    (
+      await teamReport(
+        manager,
+        { periodo: 'personalizado', inicio, fim, department, ...(team && { team }) },
+        now,
+      )
+    ).rows.find((r) => r.id === tech)?.principal;
+  assert.equal(await principal('2026-09-10', '2026-09-10'), 1);
+  assert.equal(await principal('2026-09-11', '2026-09-12'), 0);
+  assert.equal(await principal('2026-09-10', '2026-09-10', eletrica), 1);
+  assert.equal(await principal('2026-09-11', '2026-09-12', eletrica), undefined);
 });

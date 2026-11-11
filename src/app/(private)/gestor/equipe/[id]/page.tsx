@@ -5,6 +5,7 @@ import { analyticsOptions, technicianDetail, describeFilters } from '@/lib/analy
 import { AppError } from '@/lib/errors';
 import { queryString, type SearchParams } from '@/lib/period';
 import { ManagementFilters } from '@/components/management/filters';
+import { PdfLink } from '@/components/management/pdf-link';
 import { Pagination } from '@/components/pagination';
 import { MetricCard, TimeCard } from '@/components/management/summary';
 import { Bars } from '@/components/management/charts';
@@ -38,7 +39,7 @@ export default async function TechnicianPage({
         className="back-link"
         href={`/gestor/equipe?${queryString(search, { pagina: '', technician: '' })}`}
       >
-        ← Equipe de TI
+        ← Equipe técnica
       </Link>
       <div className="page-heading">
         <div>
@@ -46,10 +47,12 @@ export default async function TechnicianPage({
           <h1>{data.user.name}</h1>
           <p>{data.user.active ? 'Pessoa ativa' : 'Pessoa inativa · histórico preservado'}</p>
         </div>
+        <PdfLink screen="tecnico" params={search} id={id} />
       </div>
       <ManagementFilters options={options} values={values} lockedTechnician={id} />
       <p className="report-caption">
-        {describeFilters(data.filters)} · Participações no período e carteira atual/final.
+        {describeFilters(data.filters, options.teams.find((t) => t.id === data.filters.team)?.name)}{' '}
+        · Participações no período e carteira atual/final.
       </p>
       <div className="metric-grid">
         <MetricCard

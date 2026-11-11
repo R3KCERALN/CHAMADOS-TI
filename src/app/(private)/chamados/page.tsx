@@ -14,6 +14,7 @@ import { locationOptions } from '@/lib/organization-service';
 import { LocationFilter } from '@/components/location-fields';
 import { queryString, param, type SearchParams } from '@/lib/period';
 import { complexityLabels, impactLabels } from '@/lib/labels';
+import { teamOptions } from '@/lib/teams';
 export default async function TicketsPage({
   searchParams,
 }: {
@@ -22,7 +23,8 @@ export default async function TicketsPage({
   const user = await requireUser();
   if (user.role === 'GESTOR') redirect('/gestor');
   const revision = await operationalRevision(user.id);
-  const params = await searchParams,
+  // `movida` is a one-shot notice: keep it out of the tab and pagination links.
+  const { movida, ...params } = await searchParams,
     employee = user.role === 'FUNCIONARIO';
   const filter = [
     'novos',
@@ -36,10 +38,16 @@ export default async function TicketsPage({
     ? param(params, 'filtro')
     : 'todos';
   const fields = Object.fromEntries(
-    ['companyId', 'unitId', 'categoryId', 'departmentId', 'impact', 'complexity', 'q'].map((k) => [
-      k,
-      param(params, k),
-    ]),
+    [
+      'companyId',
+      'unitId',
+      'categoryId',
+      'departmentId',
+      'impact',
+      'complexity',
+      'q',
+      ...(user.role === 'ADMIN' ? ['teamId'] : []),
+    ].map((k) => [k, param(params, k)]),
   );
   const { tickets, total, page } = await listTickets(
     user.id,
@@ -51,7 +59,10 @@ export default async function TicketsPage({
     ? null
     : await Promise.all([
         db.category.findMany({
-          where: { organizationId: user.organizationId },
+          where: {
+            organizationId: user.organizationId,
+            ...(user.role === 'TI' && { teamId: user.teamId ?? '' }),
+          },
           orderBy: { name: 'asc' },
           select: { id: true, name: true },
         }),
@@ -62,6 +73,7 @@ export default async function TicketsPage({
         }),
       ]);
   const companies = employee ? [] : await locationOptions(user.id, false);
+  const teams = user.role === 'ADMIN' ? await teamOptions(db, user.organizationId) : [];
   const additionalFilterCount = Object.entries(fields).filter(
     ([key, current]) => key !== 'q' && Boolean(current),
   ).length;
@@ -84,6 +96,11 @@ export default async function TicketsPage({
         </Link>
       </div>
       <InvalidFilterNotice aviso={params.aviso} />
+      {movida === '1' && (
+        <p className="notice success" role="status">
+          Chamado movido para a outra equipe. Ele voltou como novo na fila dela.
+        </p>
+      )}
       {!employee && (
         <>
           <nav className="tabs" aria-label="Filtrar chamados">
@@ -124,6 +141,19 @@ export default async function TicketsPage({
                 )}
               </summary>
               <div className="filter-grid queue-more-content">
+                {user.role === 'ADMIN' && (
+                  <div className="field">
+                    <label htmlFor="teamId">Equipe</label>
+                    <select id="teamId" name="teamId" defaultValue={fields.teamId}>
+                      <option value="">Todas</option>
+                      {teams.map((t) => (
+                        <option key={t.id} value={t.id}>
+                          {t.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
                 <LocationFilter
                   companies={companies}
                   company={fields.companyId}

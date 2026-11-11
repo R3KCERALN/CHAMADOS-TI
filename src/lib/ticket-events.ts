@@ -15,7 +15,9 @@ export async function queueEventNotifications(tx: Prisma.TransactionClient, even
     include: { participants: true },
   });
   let recipients: Prisma.UserWhereInput | undefined;
-  if (event.type === 'CRIADO' && ticket.origin === 'PORTAL') recipients = { role: 'TI' };
+  if (event.type === 'CRIADO' && ticket.origin === 'PORTAL')
+    recipients = { role: 'TI', teamId: ticket.teamId };
+  else if (event.type === 'EQUIPE_ALTERADA') recipients = { role: 'TI', teamId: ticket.teamId };
   else if (['RESPONSAVEL_ALTERADO', 'APOIO_ADICIONADO'].includes(event.type) && event.targetUserId)
     recipients = { id: event.targetUserId };
   else if (event.type === 'RESOLVIDO' && ticket.requesterId)

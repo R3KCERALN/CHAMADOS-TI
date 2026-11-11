@@ -8,7 +8,10 @@
 ## Segurança e permissões
 
 - `src/lib/auth.ts` protege rotas/actions; `src/lib/access.ts` relê ator ativo/role/organização. Escopo e autoria vêm do servidor; validar IDs por recurso, nunca confiar em role, registrador, setor ou responsável do cliente.
-- FUNCIONARIO lê/comenta só os próprios chamados; TI/ADMIN veem fila; só principal/ADMIN altera status, apoios e responsável. Gestão/CSV: ADMIN/GESTOR; GESTOR não acessa detalhe operacional, TI não acessa indicadores dos colegas. Cadastros: só ADMIN.
+- FUNCIONARIO lê/comenta só os próprios chamados; TI/ADMIN veem fila; só principal/ADMIN altera status, apoios e responsável. Gestão/CSV/PDF: ADMIN/GESTOR (o PDF usa a mesma permissão, filtros e validações do CSV, sempre GET de leitura); GESTOR não acessa detalhe operacional, TI não acessa indicadores dos colegas. Cadastros: só ADMIN.
+- Equipes: leia `docs/organization-model.md` (Team). Duas equipes por organização, **TI** e **Elétrica** (tabela `Team`, criada por trigger em cada Organization). `Role.TI` é exibido como “Técnico” e exige `teamId`; ADMIN, GESTOR e FUNCIONARIO não têm equipe. Todo Ticket tem `teamId` (NOT NULL); categorias pertencem a uma equipe.
+- Leitura por equipe: técnico vê o chamado se é da sua equipe **ou** se está em `TicketParticipant`; remover o apoio remove o acesso na hora. Outra equipe responde 404 em detalhe, `/notificacoes/[id]`, comentário, classificação, localização e busca por número. ADMIN vê tudo (filtro por equipe na fila); GESTOR continua sem detalhe operacional. O principal é sempre ADMIN ou técnico da equipe do chamado; outra equipe entra só como apoio (a lista de apoio traz “Nome · Equipe”).
+- Mudar de equipe: principal/ADMIN, chamado não resolvido, via `moveTicketTeam`; volta NOVO, sem responsável, categoria limpa, apoios mantidos, evento `EQUIPE_ALTERADA` e aviso só à equipe de destino. Assumir remove o assumidor do apoio. Não trocar a equipe de técnico que é principal de chamado aberto. Abertura comum exige escolha de equipe sem valor padrão; atendimento rápido usa a equipe de quem registra (ADMIN escolhe).
 - Mutações: Server Actions ou endpoints push, com Origin contra APP_URL; nunca GET. Preservar login com limite persistente/erro genérico e erros sem stack trace.
 - Senhas/PINs **6–128 caracteres**, inclusive só números, com Argon2id; parâmetros e sessão conforme README § Segurança/Modelo de dados. Novas/redefinidas exigem troca; alterações de usuário/senha revogam sessões. Persistir só hash do token; cookies HttpOnly/Lax, Secure fora de localhost; validade 8 h.
 
@@ -34,6 +37,7 @@ Leia **`docs/metrics.md` antes de alterar consultas/CSV**. Implementação: `src
 
 - Respeitar coortes distintas: backlog atual, resolução só para responsável final, apoio removido permanece histórico. Ciclo ativo não é hora individual; histórico insuficiente é indisponível, nunca zero.
 - Agregar no PostgreSQL com SQL parametrizado; JOINs opcionais preservam “Sem filial/unidade/setor”. CSV mantém filtros, neutraliza fórmulas e pagina em snapshot repeatable-read.
+- Filtro gerencial `team` usa a equipe **atual** do chamado; CSV tem a coluna “Equipe”. PDF (`GET /gestor/relatorio`, pdfkit, fonte Helvetica embutida no PDF sem arquivos externos) reaproveita as consultas das telas, no máx. 2.000 linhas em Chamados (acima disso avisa e indica o CSV) e mostra “—” para indicador indisponível.
 
 ## Operação e UI
 
@@ -41,7 +45,7 @@ Leia **`docs/metrics.md` antes de alterar consultas/CSV**. Implementação: `src
 - UTC no banco; APP_TIMEZONE central em `src/lib/config.ts`, padrão America/Belem para exibição/filtros.
 - **README § Atualização automática e Web Push** rege polling, destinatários e ciclo de subscriptions. Revisão transacional por organização (TI/ADMIN) ou solicitante (FUNCIONARIO), nunca global ao funcionário. Polling 5 s + router.refresh(), pausado em aba oculta/edição.
 - Eventos via `src/lib/ticket-events.ts`; outbox evento/subscription atômico, sem rede na transação. Worker no Next persistente usa lease/retry limitado e revalida destinatário/organização; não substituir por envio não persistido após ação.
-- VAPID só env; subscription do autenticado/organização. Preservar allowlist anti-SSRF, deduplicação, limpeza 404/410 e desvinculação no logout. Permissão só por clique; payload sem descrição/comentários/nomes pessoais. Rápido não alerta toda a equipe.
+- VAPID só env; subscription do autenticado/organização. Preservar allowlist anti-SSRF, deduplicação, limpeza 404/410 e desvinculação no logout. Permissão só por clique; payload sem descrição/comentários/nomes pessoais. Rápido não alerta toda a equipe. Chamado novo do portal e `EQUIPE_ALTERADA` avisam só os técnicos ativos da equipe do chamado.
 
 ## Produção e validação
 

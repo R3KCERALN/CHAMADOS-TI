@@ -3,6 +3,7 @@ import { notFound } from 'next/navigation';
 import { requireUser } from '@/lib/auth';
 import { analyticsOptions, companiesReport, formatDuration } from '@/lib/analytics-service';
 import { ManagementFilters } from '@/components/management/filters';
+import { PdfLink } from '@/components/management/pdf-link';
 import { Pagination } from '@/components/pagination';
 import { organizationLabels as labels } from '@/lib/organization-labels';
 import { queryString, type SearchParams } from '@/lib/period';
@@ -32,6 +33,7 @@ export default async function CompaniesReport({
           <h1>{labels.companies}</h1>
           <p>Volume, contexto e pendências. Selecione um local para detalhar.</p>
         </div>
+        <PdfLink screen="filiais" params={params} />
       </div>
       <ManagementFilters options={options} values={values} />
       <section className="panel table-scroll">

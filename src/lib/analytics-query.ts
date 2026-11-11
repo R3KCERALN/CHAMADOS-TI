@@ -9,15 +9,23 @@ export function analyticsFilters(input: SearchParams, now = new Date()) {
       unit: z.string().max(100).optional(),
       department: z.string().max(100).optional(),
       technician: z.string().max(100).optional(),
+      team: z.string().max(100).optional(),
       category: z.string().max(100).optional(),
       complexity: z.enum(['BAIXA', 'MEDIA', 'ALTA', 'CRITICA', 'none']).optional(),
       status: z.enum(['NOVO', 'EM_ATENDIMENTO', 'AGUARDANDO', 'RESOLVIDO']).optional(),
     })
     .parse(
       Object.fromEntries(
-        ['company', 'unit', 'department', 'technician', 'category', 'complexity', 'status'].map(
-          (key) => [key, param(input, key) || undefined],
-        ),
+        [
+          'company',
+          'unit',
+          'department',
+          'technician',
+          'team',
+          'category',
+          'complexity',
+          'status',
+        ].map((key) => [key, param(input, key) || undefined]),
       ),
     );
   return { ...period, ...dimensions };
@@ -27,7 +35,7 @@ export function metricsCTE(
   f: AnalyticsFilters,
   organizationId: string,
   team = false,
-  exportPage?: { after: number; limit: number },
+  exportPage?: { after: number; limit: number; pending?: boolean },
 ) {
   const conditions: Prisma.Sql[] = [Prisma.sql`t."organizationId"=${organizationId}`];
   if (f.company)
@@ -41,6 +49,7 @@ export function metricsCTE(
       f.unit === 'none' ? Prisma.sql`t."unitId" IS NULL` : Prisma.sql`t."unitId"=${f.unit}`,
     );
   if (f.department) conditions.push(Prisma.sql`t."departmentId" = ${f.department}`);
+  if (f.team) conditions.push(Prisma.sql`t."teamId" = ${f.team}`);
   if (f.technician && !team) conditions.push(Prisma.sql`t."assigneeId" = ${f.technician}`);
   if (f.category)
     conditions.push(
@@ -61,20 +70,20 @@ export function metricsCTE(
       ${f.now.toISOString()}::timestamptz AT TIME ZONE 'UTC' AS now_at
   ), base AS MATERIALIZED (
     SELECT t.*, t."requesterName" AS requester, coalesce(d.name,'Sem setor') AS department, a.name AS assignee, c.name AS category,
-      co."displayName" AS company, co.cnpj, un.name AS unit, opener.name AS "openedBy", u.name AS "registeredRequester"
+      co."displayName" AS company, co.cnpj, un.name AS unit, tm.name AS team, opener.name AS "openedBy", u.name AS "registeredRequester"
     FROM "Ticket" t LEFT JOIN "User" u ON u.id=t."requesterId" LEFT JOIN "Department" d ON d.id=t."departmentId"
-    LEFT JOIN "Company" co ON co.id=t."companyId" LEFT JOIN "Unit" un ON un.id=t."unitId"
+    LEFT JOIN "Team" tm ON tm.id=t."teamId" LEFT JOIN "Company" co ON co.id=t."companyId" LEFT JOIN "Unit" un ON un.id=t."unitId"
     LEFT JOIN "User" opener ON opener.id=t."openedByUserId"
     LEFT JOIN "User" a ON a.id=t."assigneeId" LEFT JOIN "Category" c ON c.id=t."categoryId", p
     WHERE ${Prisma.join(conditions, ' AND ')} AND t."createdAt" <= p.now_at
       AND (t.status<>'RESOLVIDO' OR (t."createdAt"<p.end_at AND t."resolvedAt">=p.start_at))
-      ${exportPage ? Prisma.sql`AND t.number>${exportPage.after} AND ((t."createdAt">=p.start_at AND t."createdAt"<p.end_at) OR (t."resolvedAt">=p.start_at AND t."resolvedAt"<p.end_at)) ORDER BY t.number LIMIT ${exportPage.limit}` : Prisma.empty}
+      ${exportPage ? Prisma.sql`AND t.number>${exportPage.after} AND ${exportPage.pending ? Prisma.sql`t.status<>'RESOLVIDO'` : Prisma.sql`((t."createdAt">=p.start_at AND t."createdAt"<p.end_at) OR (t."resolvedAt">=p.start_at AND t."resolvedAt"<p.end_at))`} ORDER BY t.number LIMIT ${exportPage.limit}` : Prisma.empty}
   ), transitions AS (
     SELECT e.*, lead(e."createdAt") OVER (PARTITION BY e."ticketId" ORDER BY e.sequence) AS next_at,
       lead(e."fromStatus") OVER (PARTITION BY e."ticketId" ORDER BY e.sequence) AS next_from,
       row_number() OVER (PARTITION BY e."ticketId" ORDER BY e.sequence DESC) AS last_row
     FROM "TicketEvent" e JOIN base b ON b.id=e."ticketId"
-    WHERE e."toStatus" IS NOT NULL AND e.type IN ('CRIADO','ASSUMIDO','AGUARDANDO','RETOMADO','RESOLVIDO','STATUS_ALTERADO')
+    WHERE e."toStatus" IS NOT NULL AND e.type IN ('CRIADO','ASSUMIDO','AGUARDANDO','RETOMADO','RESOLVIDO','STATUS_ALTERADO','EQUIPE_ALTERADA')
   ), intervals AS (
     SELECT e.*, CASE WHEN e."toStatus"='RESOLVIDO' THEN e."createdAt"
       ELSE LEAST(COALESCE(e.next_at,b."resolvedAt",p.now_at),COALESCE(b."resolvedAt",p.now_at)) END AS until_at
@@ -103,10 +112,10 @@ export function metricsCTE(
     SELECT e."ticketId",e."targetUserId" AS user_id,e."createdAt" AS since_at,
       lead(e."createdAt") OVER (PARTITION BY e."ticketId" ORDER BY e.sequence) AS until_at
     FROM "TicketEvent" e JOIN base b ON b.id=e."ticketId"
-    WHERE e.type IN ('ASSUMIDO','RESPONSAVEL_ALTERADO') AND e."targetUserId" IS NOT NULL
+    WHERE (e.type IN ('ASSUMIDO','RESPONSAVEL_ALTERADO') AND e."targetUserId" IS NOT NULL) OR e.type='EQUIPE_ALTERADA'
   ), principal_period AS (
     SELECT DISTINCT a."ticketId",a.user_id FROM assignment_intervals a JOIN base b ON b.id=a."ticketId",p
-    WHERE a.since_at<p.end_at AND (COALESCE(a.until_at,b."resolvedAt",p.now_at)>p.start_at OR a.since_at>=p.start_at)
+    WHERE a.user_id IS NOT NULL AND a.since_at<p.end_at AND (COALESCE(a.until_at,b."resolvedAt",p.now_at)>p.start_at OR a.since_at>=p.start_at)
   ), support_intervals AS (
     SELECT e."ticketId",e."targetUserId" AS user_id,e.type,e."createdAt" AS since_at,
       lead(e."createdAt") OVER (PARTITION BY e."ticketId",e."targetUserId" ORDER BY e.sequence) AS until_at

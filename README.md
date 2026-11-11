@@ -1,6 +1,6 @@
 # Central de Suporte
 
-V1.3 funcional de uma central interna de atendimento de TI, com operação, gestão e indicadores auditáveis. Monólito full-stack: Next.js 16.3.5, React 19.3, TypeScript strict, Tailwind CSS 4, PostgreSQL 17 e Prisma 7.10. Sem autenticação externa, serviços pagos ou APIs de IA.
+V1.3 funcional de uma central interna de atendimento de TI e Elétrica, com operação, gestão e indicadores auditáveis. Monólito full-stack: Next.js 16.3.5, React 19.3, TypeScript strict, Tailwind CSS 4, PostgreSQL 17 e Prisma 7.10. Sem autenticação externa, serviços pagos ou APIs de IA.
 
 ## Requisitos
 
@@ -61,12 +61,16 @@ Migrations são aplicadas com `npm run db:migrate`. Para evoluir o schema em des
 
 ## Uso e permissões
 
-| Perfil      | Acesso                                                                                                                                                                                        |
-| ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| FUNCIONARIO | Abre chamado com descrição/impacto, vê apenas os próprios, acompanha timeline e comenta.                                                                                                      |
-| TI          | Vê chamados e fila, assume novos, registra atendimento rápido, comenta. Responsável principal gerencia status, apoios e transferência. Apoios não recebem permissão de responsável principal. |
-| ADMIN       | Administra pessoas, senhas e categorias; acesso operacional completo e indicadores gerenciais.                                                                                                |
-| GESTOR      | Panorama gerencial, equipe, detalhes e CSV. Sem acesso à fila ou ao detalhe operacional de chamados.                                                                                          |
+| Perfil      | Acesso                                                                                                                                                                                                                                                                                                                                                              |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| FUNCIONARIO | Abre chamado com descrição/impacto, vê apenas os próprios, acompanha timeline e comenta.                                                                                                                                                                                                                                                                            |
+| TI          | Exibido como **Técnico** e vinculado a uma equipe (TI ou Elétrica). Vê a fila e os chamados da própria equipe, mais os de outra equipe em que foi incluído como apoio; assume novos, registra atendimento rápido, comenta. Responsável principal gerencia status, apoios, transferência e mudança de equipe. Apoios não recebem permissão de responsável principal. |
+| ADMIN       | Administra pessoas, senhas e categorias; acesso operacional completo e indicadores gerenciais.                                                                                                                                                                                                                                                                      |
+| GESTOR      | Panorama gerencial, equipe, detalhes, CSV e PDF. Sem acesso à fila ou ao detalhe operacional de chamados.                                                                                                                                                                                                                                                                |
+
+**Equipes.** A organização tem duas equipes técnicas, **TI** e **Elétrica**, criadas automaticamente pela migration/trigger. Na abertura comum, o funcionário escolhe "Para qual equipe é o chamado?" (obrigatório, sem opção pré-marcada); o resto do formulário não muda. No cadastro de usuário, o ADMIN escolhe a equipe do perfil Técnico (obrigatória; os demais perfis não têm equipe). O técnico não vê a fila nem abre o chamado de outra equipe, exceto enquanto estiver como apoio; ao remover o apoio, o acesso termina. O ADMIN atua nas duas equipes e filtra a fila por equipe. O responsável principal é sempre ADMIN ou técnico da equipe do chamado; técnicos da outra equipe entram como apoio ("Nome · Equipe"). Categorias técnicas pertencem a uma equipe (**Categorias** agrupa por equipe e pede a equipe ao criar).
+
+Chamado aberto na equipe errada: o principal ou o ADMIN usa **Mudar de equipe → Mover para Elétrica/TI**. O chamado volta como NOVO, sem responsável, na fila da outra equipe, com a categoria limpa e os apoios mantidos; a timeline registra o evento e só a equipe de destino é avisada. O ADMIN não troca a equipe de um técnico que ainda é responsável principal de chamados não resolvidos: transfira-os antes. Atendimento rápido usa a equipe de quem registra; o ADMIN escolhe a equipe.
 
 Fluxo: **NOVO → EM_ATENDIMENTO → AGUARDANDO → EM_ATENDIMENTO → RESOLVIDO**. Também é possível resolver diretamente de EM_ATENDIMENTO ou AGUARDANDO. Espera requer motivo; OUTRO exige detalhes. Reabertura está prevista no enum de auditoria, mas não é oferecida na V1.
 
@@ -102,9 +106,11 @@ A migration **202609180004_management** adicionou gestão. A nova migration incr
 - **Fila — `/chamados`**: filtros todos/novos/meus/aguardando, categoria, setor, impacto e complexidade; busca por número, solicitante e descrição no servidor.
 - **Início do TI**: novos na fila, meus em atendimento, meus aguardando, resolvidos hoje e apoios atuais. Atendimento rápido continua destacado no celular.
 
-Filtros gerenciais combináveis: filial e unidade dependente, Hoje, Últimos 7 dias, Últimos 30 dias, Este mês, Mês anterior ou datas personalizadas, setor, técnico, categoria, complexidade e status. URLs conservam filtros e paginação. CSV em **Exportar CSV** usa os mesmos filtros, UTF-8/BOM, `;`, datas UTC e durações em segundos, com proteção contra fórmulas.
+Filtros gerenciais combináveis: equipe (equipe atual do chamado), filial e unidade dependente, Hoje, Últimos 7 dias, Últimos 30 dias, Este mês, Mês anterior ou datas personalizadas, setor, técnico, categoria, complexidade e status. URLs conservam filtros e paginação. CSV em **Exportar CSV** usa os mesmos filtros, inclui a coluna Equipe, UTF-8/BOM, `;`, datas UTC e durações em segundos, com proteção contra fórmulas.
 
 **Leia [docs/metrics.md](docs/metrics.md) para as definições exatas.** Aberturas usam `createdAt`; resoluções usam `resolvedAt`; backlog é sempre atual e não é limitado pelo período. A primeira resposta é o primeiro evento ASSUMIDO. Tempo ativo de ciclo soma intervalos EM_ATENDIMENTO, excluindo NOVO e AGUARDANDO; não é hora trabalhada. Apoios e participações principais são distintos; só o responsável final recebe uma resolução. Ciclos sem histórico suficiente não recebem tempos inventados.
+
+**PDF.** Cada tela gerencial (Panorama, Filiais e detalhe, Equipe e detalhe do técnico, Chamados) tem **Baixar PDF**, em `GET /gestor/relatorio?tela=...`, somente leitura, para ADMIN e GESTOR, com os mesmos filtros da tela (inclusive equipe). O documento traz organização, título, período, filtros, data/hora de geração em `APP_TIMEZONE` e quem gerou; indicador indisponível aparece como "—". Os gráficos viram tabelas. O PDF de Chamados tem no máximo 2.000 linhas: acima disso o próprio PDF avisa o corte e indica o CSV. Decisão de dependência: [pdfkit](https://pdfkit.org) 0.20.2 (JavaScript puro, sem binário nativo nem navegador headless, compatível com o container somente leitura e sem root) gera o arquivo no servidor com a fonte Helvetica padrão do PDF, sem requisições externas e com acentuação em português; foi a única dependência de produção adicionada e é empacotada pelo webpack no build standalone.
 
 `APP_TIMEZONE` centraliza exibição e períodos, padrão **America/Belem**. Configure outro fuso IANA no `.env` e reinicie o servidor, se necessário. O banco mantém UTC.
 
@@ -140,7 +146,8 @@ Abra **http://localhost:3002**. O comando cria **somente `central_suporte_demo`*
 - **Department**: cadastro próprio, nome único e estado; preparado para administração futura.
 - **Session**: hash do token, usuário, criação e expiração absoluta de 8 horas.
 - **LoginThrottle**: contador persistente por username; máximo de 10 tentativas por janela de 15 minutos. Entrar com sucesso limpa o contador.
-- **Category**: nome único (também normalizado no banco), ativa/inativa e data de criação; referências históricas restritivas.
+- **Team**: equipe da organização (chave TI ou ELETRICA, nome e estado), criada por trigger para cada Organization. `User.teamId` é obrigatório para o perfil TI (Técnico) e nulo nos demais; `Ticket.teamId` é obrigatório; `Category.teamId` define a equipe da categoria.
+- **Category**: nome único por organização e equipe (também normalizado no banco), ativa/inativa e data de criação; referências históricas restritivas.
 - **Ticket**: organização, Company, Unit opcional, registrador, solicitante User opcional e snapshot do nome; categoria e complexidade opcionais, número sequencial, descrição, impacto, solicitante, setor na abertura, responsável principal, status, origem, motivo/detalhe de espera, criação/início/resolução.
 - **TicketParticipant**: relação normalizada de apoios, com unicidade por chamado/técnico.
 - **TicketEvent**: ator, técnico de destino, tipo, status anterior/novo, categoria/complexidade anterior/nova, motivo, nota, metadata auxiliar, timestamp e sequência de ordenação.
@@ -177,11 +184,11 @@ npm audit
 
 Os testes criam um **banco temporário exclusivo** no mesmo PostgreSQL, aplicam todas as migrations e o removem ao terminar. Não alteram os dados reais. O usuário de conexão precisa de permissão CREATEDB; o usuário local do Compose possui essa permissão. Em caso de interrupção abrupta, pode sobrar um banco `central_test_*` para remoção manual após confirmar que nenhum teste o utiliza.
 
-`npm test`: autenticação, senha incorreta, usuário inativo, sessão expirada/revogada, troca obrigatória, IDOR, permissões administrativas, criação/normalização de usuários, claim concorrente, status, espera/retomada, apoio, transferência, comentário, atendimento rápido, preservação de histórico e limitação de login. A suíte gerencial cobre senhas/PINs, categorias, complexidade, permissões, transferências, apoios, esperas múltiplas, coortes, filtros, mediana, timezone, CSV e paginação.
+`npm test` aceita arquivos como argumento (`npm test -- tests/management.test.ts`), útil durante o desenvolvimento; sem argumento roda a suíte inteira. Cobre: autenticação, senha incorreta, usuário inativo, sessão expirada/revogada, troca obrigatória, IDOR, permissões administrativas, criação/normalização de usuários, claim concorrente, status, espera/retomada, apoio, transferência, comentário, atendimento rápido, preservação de histórico e limitação de login. A suíte gerencial cobre senhas/PINs, categorias, complexidade, permissões, transferências, apoios, esperas múltiplas, coortes, filtros, mediana, timezone, CSV e paginação.
 
-`npm run test:e2e`: inicia build de produção na porta 3100, executa o cenário real pelo navegador (desktop e viewport mobile), valida área administrativa, GESTOR, timeline, manifest, ícones, cabeçalhos e rejeição de POST de outra origem. Também executa axe para regras WCAG A/AA nas telas de login, administração, funcionário, detalhe resolvido e atendimento rápido, panorama, equipe e detalhes gerenciais. Valida classificação técnica, filtros e CSV no navegador. Usa Chrome local quando encontrado. Caso contrário, instale apenas o navegador de teste com `npx playwright install chromium`. Screenshots e traces de falhas ficam em `test-results/`.
+`npm run test:e2e`: inicia build de produção na porta 3100, executa o cenário real pelo navegador (desktop e viewport mobile), valida área administrativa, GESTOR, timeline, manifest, ícones, cabeçalhos e rejeição de POST de outra origem. O cenário cobre as duas equipes: cadastro de técnico com equipe, abertura com escolha de equipe, fila isolada por equipe, apoio entre equipes e download do PDF gerencial. Também executa axe para regras WCAG A/AA nas telas de login, administração (inclusive o cadastro com equipe), funcionário (inclusive a abertura com escolha de equipe), detalhe resolvido e atendimento rápido, panorama, equipe e detalhes gerenciais. Valida classificação técnica, filtros e CSV no navegador. Usa Chrome local quando encontrado. Caso contrário, instale apenas o navegador de teste com `npx playwright install chromium`. Screenshots e traces de falhas ficam em `test-results/`.
 
-Validação da entrega: **81 testes de integração e 6 testes E2E**, além de 2 cenários reaplicados ao container com HTTPS local, lint sem avisos, TypeScript sem erros, build de produção aprovado e auditoria npm sem vulnerabilidades conhecidas. As verificações automáticas de acessibilidade não substituem uma avaliação manual completa com tecnologias assistivas.
+Validação da entrega: **129 testes de integração e 6 testes E2E**, lint sem avisos, TypeScript sem erros, build de produção aprovado e auditoria npm sem vulnerabilidades conhecidas. As verificações automáticas de acessibilidade não substituem uma avaliação manual completa com tecnologias assistivas.
 
 `npm audit` verifica dependências. Overrides de deepmerge-ts 8.0.2 e mysql2 3.24.4 corrigem avisos transitivos do Prisma CLI, validados com generate/migrations/testes/build.
 
@@ -269,14 +276,15 @@ Payload: número do chamado, tipo do evento e filial; sem descrição, comentár
 
 ### Destinatários
 
-| Evento                               | Destinatários               |
-| ------------------------------------ | --------------------------- |
-| Novo chamado normal                  | TI ativos da organização    |
-| Transferência                        | Novo responsável            |
-| Apoio adicionado                     | Técnico adicionado          |
-| Comentário do solicitante cadastrado | Responsável e apoios atuais |
-| Comentário de TI/ADMIN               | Solicitante cadastrado      |
-| Resolução                            | Solicitante cadastrado      |
+| Evento                               | Destinatários                        |
+| ------------------------------------ | ------------------------------------ |
+| Novo chamado normal                  | Técnicos ativos da equipe do chamado |
+| Chamado movido de equipe             | Técnicos ativos da equipe de destino |
+| Transferência                        | Novo responsável                     |
+| Apoio adicionado                     | Técnico adicionado                   |
+| Comentário do solicitante cadastrado | Responsável e apoios atuais          |
+| Comentário de TI/ADMIN               | Solicitante cadastrado               |
+| Resolução                            | Solicitante cadastrado               |
 
 Sempre excluímos o autor. Atendimento Rápido não dispara alerta coletivo; solicitante textual nunca recebe push. GESTOR não recebe links operacionais aos quais não tem acesso. Apoio removido, assumir e mudanças intermediárias de status atualizam telas, mas não geram push extra.
 
