@@ -269,11 +269,12 @@ export async function exportRows(
   afterNumber = 0,
   limit = 500,
   tx: Prisma.TransactionClient = db,
+  pending = false,
 ) {
   const viewer = await actor(tx, actorId, ['ADMIN', 'GESTOR']);
   const f = analyticsFilters(input, now);
   return tx.$queryRaw<ExportRow[]>(
-    Prisma.sql`${metricsCTE(f, viewer.organizationId, false, { after: afterNumber, limit: Math.min(500, Math.max(1, limit)) })} SELECT number,team,requester,company,cnpj,unit,"openedBy","registeredRequester",CASE WHEN "requesterId" IS NULL THEN "requesterName" END AS "manualRequester",department,assignee,category,complexity,impact,status,origin,"createdAt",first_response,"resolvedAt",total_seconds,waiting_seconds,active_seconds FROM m ORDER BY number`,
+    Prisma.sql`${metricsCTE(f, viewer.organizationId, false, { after: afterNumber, limit: Math.min(500, Math.max(1, limit)), pending })} SELECT number,team,requester,company,cnpj,unit,"openedBy","registeredRequester",CASE WHEN "requesterId" IS NULL THEN "requesterName" END AS "manualRequester",department,assignee,category,complexity,impact,status,origin,"createdAt",first_response,"resolvedAt",total_seconds,waiting_seconds,active_seconds FROM m ORDER BY number`,
   );
 }
 export function formatDuration(seconds: number | null | undefined) {

@@ -35,7 +35,7 @@ export function metricsCTE(
   f: AnalyticsFilters,
   organizationId: string,
   team = false,
-  exportPage?: { after: number; limit: number },
+  exportPage?: { after: number; limit: number; pending?: boolean },
 ) {
   const conditions: Prisma.Sql[] = [Prisma.sql`t."organizationId"=${organizationId}`];
   if (f.company)
@@ -77,7 +77,7 @@ export function metricsCTE(
     LEFT JOIN "User" a ON a.id=t."assigneeId" LEFT JOIN "Category" c ON c.id=t."categoryId", p
     WHERE ${Prisma.join(conditions, ' AND ')} AND t."createdAt" <= p.now_at
       AND (t.status<>'RESOLVIDO' OR (t."createdAt"<p.end_at AND t."resolvedAt">=p.start_at))
-      ${exportPage ? Prisma.sql`AND t.number>${exportPage.after} AND ((t."createdAt">=p.start_at AND t."createdAt"<p.end_at) OR (t."resolvedAt">=p.start_at AND t."resolvedAt"<p.end_at)) ORDER BY t.number LIMIT ${exportPage.limit}` : Prisma.empty}
+      ${exportPage ? Prisma.sql`AND t.number>${exportPage.after} AND ${exportPage.pending ? Prisma.sql`t.status<>'RESOLVIDO'` : Prisma.sql`((t."createdAt">=p.start_at AND t."createdAt"<p.end_at) OR (t."resolvedAt">=p.start_at AND t."resolvedAt"<p.end_at))`} ORDER BY t.number LIMIT ${exportPage.limit}` : Prisma.empty}
   ), transitions AS (
     SELECT e.*, lead(e."createdAt") OVER (PARTITION BY e."ticketId" ORDER BY e.sequence) AS next_at,
       lead(e."fromStatus") OVER (PARTITION BY e."ticketId" ORDER BY e.sequence) AS next_from,

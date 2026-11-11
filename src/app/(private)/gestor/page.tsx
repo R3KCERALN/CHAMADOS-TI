@@ -7,6 +7,7 @@ import { resetInvalidFilters } from '@/lib/invalid-filters';
 import { InvalidFilterNotice } from '@/components/invalid-filter-notice';
 import { type SearchParams, queryString } from '@/lib/period';
 import { ManagementFilters } from '@/components/management/filters';
+import { PdfLink } from '@/components/management/pdf-link';
 import { MetricCard, TimeCard } from '@/components/management/summary';
 import { Bars, Evolution } from '@/components/management/charts';
 import { ManagementTicketTable } from '@/components/management/ticket-table';
@@ -81,6 +82,7 @@ export default async function ManagementPage({
           <a href={`/gestor/exportar?${queryString(params)}`} className="button primary">
             Exportar CSV
           </a>
+          <PdfLink screen="panorama" params={params} />
         </div>
       </div>
       <nav className="management-section-nav" aria-label="Seções do panorama">

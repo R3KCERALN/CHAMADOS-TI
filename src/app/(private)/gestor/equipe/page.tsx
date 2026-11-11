@@ -9,6 +9,7 @@ import {
 } from '@/lib/analytics-service';
 import { queryString, type SearchParams } from '@/lib/period';
 import { ManagementFilters } from '@/components/management/filters';
+import { PdfLink } from '@/components/management/pdf-link';
 import { Pagination } from '@/components/pagination';
 import { complexityLabels } from '@/lib/labels';
 export default async function TeamPage({ searchParams }: { searchParams: Promise<SearchParams> }) {
@@ -33,6 +34,7 @@ export default async function TeamPage({ searchParams }: { searchParams: Promise
           <h1>Equipe de TI</h1>
           <p>Responsabilidades, apoios e carga atual. Sem pontuação ou comparação competitiva.</p>
         </div>
+        <PdfLink screen="equipe" params={params} />
       </div>
       <ManagementFilters options={options} values={values} />
       <p className="report-caption">
