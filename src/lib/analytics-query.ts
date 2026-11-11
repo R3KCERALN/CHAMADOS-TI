@@ -112,10 +112,10 @@ export function metricsCTE(
     SELECT e."ticketId",e."targetUserId" AS user_id,e."createdAt" AS since_at,
       lead(e."createdAt") OVER (PARTITION BY e."ticketId" ORDER BY e.sequence) AS until_at
     FROM "TicketEvent" e JOIN base b ON b.id=e."ticketId"
-    WHERE e.type IN ('ASSUMIDO','RESPONSAVEL_ALTERADO') AND e."targetUserId" IS NOT NULL
+    WHERE (e.type IN ('ASSUMIDO','RESPONSAVEL_ALTERADO') AND e."targetUserId" IS NOT NULL) OR e.type='EQUIPE_ALTERADA'
   ), principal_period AS (
     SELECT DISTINCT a."ticketId",a.user_id FROM assignment_intervals a JOIN base b ON b.id=a."ticketId",p
-    WHERE a.since_at<p.end_at AND (COALESCE(a.until_at,b."resolvedAt",p.now_at)>p.start_at OR a.since_at>=p.start_at)
+    WHERE a.user_id IS NOT NULL AND a.since_at<p.end_at AND (COALESCE(a.until_at,b."resolvedAt",p.now_at)>p.start_at OR a.since_at>=p.start_at)
   ), support_intervals AS (
     SELECT e."ticketId",e."targetUserId" AS user_id,e.type,e."createdAt" AS since_at,
       lead(e."createdAt") OVER (PARTITION BY e."ticketId",e."targetUserId" ORDER BY e.sequence) AS until_at

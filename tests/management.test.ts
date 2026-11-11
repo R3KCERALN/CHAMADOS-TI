@@ -608,3 +608,49 @@ test('chamado movido e resolvido mantém tempos confiáveis e a primeira respost
 test('CSV tem coluna Equipe logo depois do número', () => {
   assert.ok(csvHeader.startsWith('"Número";"Equipe"'));
 });
+test('mover de equipe encerra a participação principal de quem era o responsável', async () => {
+  const { eletrica, department } = await teamScenario();
+  const date = (h: number) => new Date(`2026-09-10T${String(h).padStart(2, '0')}:00:00Z`);
+  const ticket = await db.ticket.create({
+    data: {
+      description: 'Chamado movido para outra equipe.',
+      organizationId,
+      teamId: eletrica,
+      requesterName: 'Pessoa histórica',
+      requesterId: employee,
+      departmentId: department,
+      impact: 'PARCIAL',
+      status: 'NOVO',
+      createdAt: date(12),
+    },
+  });
+  const events = [
+    { type: 'CRIADO', at: 12, to: 'NOVO' },
+    { type: 'ASSUMIDO', at: 13, from: 'NOVO', to: 'EM_ATENDIMENTO', target: tech },
+    { type: 'EQUIPE_ALTERADA', at: 15, from: 'EM_ATENDIMENTO', to: 'NOVO' },
+  ] as const;
+  for (const e of events)
+    await db.ticketEvent.create({
+      data: {
+        ticketId: ticket.id,
+        actorId: tech,
+        type: e.type,
+        createdAt: date(e.at),
+        fromStatus: 'from' in e ? e.from : undefined,
+        toStatus: e.to,
+        targetUserId: 'target' in e ? e.target : undefined,
+      },
+    });
+  const principal = async (inicio: string, fim: string, team?: string) =>
+    (
+      await teamReport(
+        manager,
+        { periodo: 'personalizado', inicio, fim, department, ...(team && { team }) },
+        now,
+      )
+    ).rows.find((r) => r.id === tech)?.principal;
+  assert.equal(await principal('2026-09-10', '2026-09-10'), 1);
+  assert.equal(await principal('2026-09-11', '2026-09-12'), 0);
+  assert.equal(await principal('2026-09-10', '2026-09-10', eletrica), 1);
+  assert.equal(await principal('2026-09-11', '2026-09-12', eletrica), undefined);
+});
