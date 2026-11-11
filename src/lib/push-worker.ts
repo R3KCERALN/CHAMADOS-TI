@@ -46,6 +46,7 @@ export async function dispatchPushBatch(sender: PushSender = send) {
         where: { id },
         include: {
           subscription: { include: { user: true, organization: true } },
+          stockAlert: { include: { item: true } },
           event: { include: { ticket: { include: { company: true, participants: true } } } },
         },
       });
@@ -55,9 +56,20 @@ export async function dispatchPushBatch(sender: PushSender = send) {
           where: { id, leaseToken: lease, status: 'PENDING' },
           data: { status, finishedAt: new Date(), leaseToken: null, lastStatus },
         });
-      // Stock alert deliveries have no ticket event and are not dispatched yet.
-      if (!job.event) return finish('CANCELLED');
-      const { subscription: sub, event } = job;
+      const { subscription: sub, event, stockAlert: alert } = job;
+      let payload: string, sourceId: string;
+      if (alert) {
+        const user = sub.user;
+        if (!sub.active || !sub.organization.active || !user.active || user.mustChangePassword ||
+          !['TI','GESTOR','ADMIN'].includes(user.role) || user.organizationId !== alert.organizationId ||
+          sub.organizationId !== alert.organizationId || alert.closedAt !== null || !alert.item.active ||
+          job.createdAt.getTime() < Date.now() - 24 * 60 * 60 * 1000 || !validPushEndpoint(sub.endpoint)) {
+          await finish('CANCELLED'); return;
+        }
+        payload = JSON.stringify({ title: 'Material acabando', body: alert.item.name, url: '/estoque?aba=acabando', tag: alert.id });
+        sourceId = alert.id;
+      } else {
+        if (!event) return finish('CANCELLED');
       const ticket = event.ticket;
       const user = sub.user;
       const canRead =
@@ -86,17 +98,20 @@ export async function dispatchPushBatch(sender: PushSender = send) {
         await finish('CANCELLED');
         return;
       }
-      const payload = JSON.stringify({
+      payload = JSON.stringify({
         title: `${ticketNumber(ticket.number)} · ${titles[event.type] || 'Chamado atualizado'}`,
         body: ticket.company?.displayName || 'Central de Suporte',
         url: `/notificacoes/${ticket.id}`,
         tag: event.id,
       });
+
+      sourceId = event.id;
+      }
       try {
         await sender(
           { endpoint: sub.endpoint, keys: { p256dh: sub.p256dh, auth: sub.auth } },
           payload,
-          createHash('sha256').update(event.id).digest('base64url').slice(0, 32),
+          createHash('sha256').update(sourceId).digest('base64url').slice(0, 32),
         );
         await finish('SENT', 201);
       } catch (error) {

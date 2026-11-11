@@ -280,6 +280,10 @@ export async function stockAction(_: FormState, form: FormData): Promise<FormSta
         });
         success = 'Contagem registrada.';
         break;
+      case 'pedido-feito':
+        await stock.markReplenishmentRequested(user.id, value(form, 'alertId'));
+        success = 'Pedido registrado.';
+        break;
       case 'conferir':
         await reviewAuthorization(user.id, value(form, 'movementId'), {
           outcome: value(form, 'outcome') as import('@/generated/prisma/client').StockReviewOutcome,

@@ -4,6 +4,7 @@ import { AppError } from './errors';
 import { requireTeam } from './teams';
 import { stockActor } from './stock-access';
 import { canSee } from './services';
+import { queueStockAlertNotifications } from './stock-notifications';
 import {
   Prisma,
   StockItemKind,
@@ -99,19 +100,22 @@ export async function syncAlert(
   item: StockItem,
   balance: Prisma.Decimal,
   movementId: string | null,
+  actorId: string | null = null,
 ): Promise<StockAlert | null> {
   const open = await tx.stockAlert.findFirst({ where: { itemId: item.id, closedAt: null } });
   const low =
     item.kind === 'MATERIAL' && item.active && item.minimum !== null && balance.lte(item.minimum);
   if (low) {
     if (open) return null;
-    return tx.stockAlert.create({
+    const alert = await tx.stockAlert.create({
       data: {
         organizationId: item.organizationId,
         itemId: item.id,
         openedByMovementId: movementId,
       },
     });
+    await queueStockAlertNotifications(tx, alert, actorId);
+    return alert;
   }
   if (open)
     await tx.stockAlert.update({
@@ -167,7 +171,7 @@ export async function applyMaterialMovement(
     where: { id: item.id },
     data: { balance, needsCount },
   });
-  await syncAlert(tx, updated, balance, movement.id);
+  await syncAlert(tx, updated, balance, movement.id, actor.id);
   return movement;
 }
 type ItemInput = {
@@ -222,7 +226,7 @@ export async function createItem(
           },
         });
         if (!initial?.gt(0)) {
-          await syncAlert(tx, item, item.balance, null);
+          await syncAlert(tx, item, item.balance, null, user.id);
           return { item, movement: null };
         }
         const movement = await applyMaterialMovement(tx, item, user, {
@@ -266,7 +270,7 @@ export async function updateItem(actorId: string, itemId: string, input: ItemInp
         }
       if (!Object.keys(after).length) return item;
       const updated = await tx.stockItem.update({ where: { id: item.id }, data: next });
-      if ('minimum' in after) await syncAlert(tx, updated, updated.balance, null);
+      if ('minimum' in after) await syncAlert(tx, updated, updated.balance, null, user.id);
       await tx.stockItemAudit.create({
         data: {
           organizationId: user.organizationId,
@@ -420,7 +424,7 @@ export async function deactivateItem(
       where: { id: item.id },
       data: { active: false, deactivatedReason: text, holderId: null, heldSince: null },
     });
-    await syncAlert(tx, updated, updated.balance, null);
+    await syncAlert(tx, updated, updated.balance, null, user.id);
     await tx.stockItemAudit.create({
       data: {
         organizationId: user.organizationId,
@@ -518,4 +522,14 @@ export async function authorizationPhoto(actorId: string, movementId: string): P
   const photo = await db.stockPhoto.findUnique({ where: { movementId } });
   if (!photo) throw new AppError('Foto removida após o prazo de guarda.', 404);
   return { data: photo.data, mime: 'image/webp' };
+}
+
+export async function markReplenishmentRequested(actorId: string, alertId: string) {
+  return db.$transaction(async (tx) => {
+    const user = await stockActor(tx, actorId, 'view');
+    const alert = await tx.stockAlert.findFirst({ where: { id: alertId, organizationId: user.organizationId } });
+    if (!alert) throw new AppError('Alerta não encontrado.', 404);
+    const result = await tx.stockAlert.updateMany({ where: { id: alertId, organizationId: user.organizationId, closedAt: null, requestedById: null }, data: { requestedById: user.id, requestedAt: new Date() } });
+    if (result.count !== 1) throw new AppError('Alguém já marcou este pedido. Atualize a página.', 409);
+  });
 }
