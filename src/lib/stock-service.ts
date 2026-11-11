@@ -3,6 +3,7 @@ import { db } from './db';
 import { AppError } from './errors';
 import { requireTeam } from './teams';
 import { stockActor } from './stock-access';
+import { canSee } from './services';
 import {
   Prisma,
   StockItemKind,
@@ -431,4 +432,67 @@ export async function deactivateItem(
     });
     return updated;
   });
+}
+
+const HOUR = 60 * 60 * 1000;
+function withinTicketWindow(ticket: { status: string; resolvedAt: Date | null }) {
+  return ticket.status !== 'RESOLVIDO' ||
+    (ticket.resolvedAt !== null && ticket.resolvedAt.getTime() >= Date.now() - 48 * HOUR);
+}
+function participates(user: { id: string; role: string }, ticket: {
+  assigneeId: string | null; participants: { userId: string }[];
+}) {
+  return user.role === 'ADMIN' || ticket.assigneeId === user.id ||
+    ticket.participants.some((p) => p.userId === user.id);
+}
+export async function recordTicketUse(actorId: string, ticketId: string, input: {
+  itemId: string; quantity: string; requestId: string;
+}): Promise<StockMovement> {
+  return withRequestId(actorId, input.requestId, (requestId) => db.$transaction(async (tx) => {
+    const user = await stockActor(tx, actorId, 'operate');
+    await tx.$queryRaw`SELECT id FROM "Ticket" WHERE id = ${ticketId} AND "organizationId" = ${user.organizationId} FOR SHARE`;
+    const ticket = await tx.ticket.findFirst({ where: { id: ticketId, organizationId: user.organizationId }, include: { participants: true } });
+    if (!ticket || !canSee(user, ticket)) throw new AppError('Chamado não encontrado.', 404);
+    if (!participates(user, ticket)) throw new AppError('Só quem participa do chamado pode registrar materiais.', 403);
+    if (!withinTicketWindow(ticket)) throw new AppError('O prazo de 48 horas depois da resolução acabou. Registre como uso fora de chamado, com foto.');
+    const item = await lockActiveMaterial(tx, input.itemId, user.organizationId);
+    const quantity = parseQuantity(input.quantity);
+    return applyMaterialMovement(tx, item, user, { type: 'USO_CHAMADO', quantity,
+      delta: quantity.negated(), ticketId, ticketTeamId: ticket.teamId, requestId });
+  }), (movement) => movement);
+}
+export async function reverseMovement(actorId: string, movementId: string, input: {
+  reason: string; requestId: string;
+}): Promise<StockMovement> {
+  return withRequestId(actorId, input.requestId, (requestId) => db.$transaction(async (tx) => {
+    const user = await stockActor(tx, actorId, 'operate');
+    const original = await tx.stockMovement.findFirst({ where: { id: movementId, organizationId: user.organizationId } });
+    if (!original) throw new AppError('Lançamento não encontrado.', 404);
+    const item = await lockItem(tx, original.itemId, user.organizationId);
+    const reversed = await tx.stockMovement.findUnique({ where: { reversesId: original.id } });
+    if (reversed) {
+      if (reversed.requestId === requestId && reversed.actorId === actorId) return reversed;
+      throw new AppError('Este lançamento já foi estornado.', 409);
+    }
+    if (!['ENTRADA', 'USO_CHAMADO', 'USO_AVULSO'].includes(original.type))
+      throw new AppError('Este tipo de lançamento não pode ser estornado.');
+    if (!user.keeper && (original.actorId !== actorId || original.createdAt.getTime() < Date.now() - 24 * HOUR))
+      throw new AppError('Só quem lançou, em até 24 horas, ou um responsável de estoque pode estornar.', 403);
+    const reason = boundedText(input.reason, 3, 500, 'Informe o motivo do estorno, com 3 a 500 caracteres.');
+    return applyMaterialMovement(tx, item, user, { type: 'ESTORNO', quantity: original.quantity!,
+      delta: original.delta!.negated(), reversesId: original.id, reason, requestId });
+  }), (movement) => movement);
+}
+export async function ticketMaterials(actorId: string, ticketId: string) {
+  const user = await stockActor(db, actorId, 'view');
+  if (user.role !== 'TI' && user.role !== 'ADMIN') throw new AppError('Chamado não encontrado.', 404);
+  const ticket = await db.ticket.findFirst({ where: { id: ticketId, organizationId: user.organizationId }, include: { participants: true } });
+  if (!ticket || !canSee(user, ticket)) throw new AppError('Chamado não encontrado.', 404);
+  const movements = await db.stockMovement.findMany({ where: { ticketId, organizationId: user.organizationId, type: 'USO_CHAMADO' },
+    include: { item: true, actor: { select: { name: true } }, reversedBy: { select: { id: true } } }, orderBy: { sequence: 'asc' } });
+  const materials = await db.stockItem.findMany({ where: { organizationId: user.organizationId, kind: 'MATERIAL', active: true },
+    include: { team: { select: { name: true } } }, orderBy: { name: 'asc' } });
+  return { movements: movements.map(({ reversedBy, ...m }) => ({ ...m, reversed: !!reversedBy })),
+    canRecord: participates(user, ticket) && withinTicketWindow(ticket),
+    materials: materials.map((m) => ({ id: m.id, name: m.name, unit: m.unit, teamName: m.team.name })) };
 }

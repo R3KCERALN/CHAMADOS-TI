@@ -16,8 +16,17 @@ import {
   takeTool,
   returnTool,
   deactivateItem,
+  recordTicketUse,
+  reverseMovement,
+  ticketMaterials,
 } from '../src/lib/stock-service';
-import { updateUser } from '../src/lib/services';
+import {
+  updateUser,
+  createTicket,
+  claimTicket,
+  setSupport,
+  changeStatus,
+} from '../src/lib/services';
 import { formatQuantity } from '../src/lib/stock-labels';
 import { Prisma, type Role } from '../src/generated/prisma/client';
 const password = process.env.TEST_PASSWORD!;
@@ -560,4 +569,314 @@ test('ferramenta desativada com motivo some da retirada e guarda o histórico', 
     message: 'Este material está desativado.',
   });
   assert.equal(await db.stockMovement.count({ where: { itemId: cable.id } }), 1);
+});
+
+const HOUR = 60 * 60 * 1000;
+const deadlineMessage =
+  'O prazo de 48 horas depois da resolução acabou. Registre como uso fora de chamado, com foto.';
+const reverseDenied =
+  'Só quem lançou, em até 24 horas, ou um responsável de estoque pode estornar.';
+/** A TI ticket opened by the employee and claimed by `tech`. */
+async function claimedTicket(team = tiTeam, assignee = tech) {
+  const ticket = await createTicket(employee, {
+    description: 'Tomada da sala de reunião sem energia.',
+    impact: 'PARCIAL',
+    teamId: team,
+  });
+  await claimTicket(assignee, ticket.id);
+  return ticket;
+}
+const use = (actorId: string, ticketId: string, itemId: string, quantity = '1', requestId?: string) =>
+  recordTicketUse(actorId, ticketId, { itemId, quantity, requestId: requestId ?? randomUUID() });
+const reverse = (actorId: string, movementId: string, requestId?: string) =>
+  reverseMovement(actorId, movementId, {
+    reason: 'Lançado no chamado errado',
+    requestId: requestId ?? randomUUID(),
+  });
+
+test('oito usos simultâneos não perdem baixa e o aviso dispara uma vez', async () => {
+  const target = await material('2', '8');
+  const ticket = await claimedTicket();
+  assert.equal((await alerts(target.id)).length, 0);
+  const moves = await Promise.all(
+    Array.from({ length: 8 }, () => use(tech, ticket.id, target.id)),
+  );
+  assert.equal(new Set(moves.map((m) => m.id)).size, 8);
+  const after = await item(target.id);
+  assert.equal(after.balance.toString(), '0');
+  assert.equal(after.needsCount, false);
+  const uses = await db.stockMovement.findMany({
+    where: { itemId: target.id, type: 'USO_CHAMADO' },
+    orderBy: { sequence: 'asc' },
+  });
+  assert.equal(uses.length, 8);
+  assert.deepEqual(
+    uses.map((m) => m.balanceAfter?.toString()),
+    ['7', '6', '5', '4', '3', '2', '1', '0'],
+  );
+  for (const m of uses) {
+    assert.equal(m.ticketId, ticket.id);
+    assert.equal(m.ticketTeamId, tiTeam);
+    assert.equal(m.itemTeamId, tiTeam);
+    assert.equal(m.actorTeamId, tiTeam);
+    assert.equal(m.quantity?.toString(), '1');
+    assert.equal(m.delta?.toString(), '-1');
+  }
+  const opened = await alerts(target.id);
+  assert.equal(opened.length, 1);
+  assert.equal(opened[0].closedAt, null);
+  assert.equal(opened[0].openedByMovementId, uses[5].id);
+});
+
+test('uso acima do saldo é aceito e marca conferir saldo', async () => {
+  const target = await material(null, '1');
+  const ticket = await claimedTicket();
+  const moved = await use(tech, ticket.id, target.id, '3');
+  assert.equal(moved.balanceAfter?.toString(), '-2');
+  const after = await item(target.id);
+  assert.equal(after.balance.toString(), '-2');
+  assert.equal(after.needsCount, true);
+  // Decimal input with a comma works too.
+  await use(tech, ticket.id, target.id, '0,5');
+  assert.equal((await item(target.id)).balance.toString(), '-2.5');
+  for (const bad of ['0', '-1', 'abc', '2,5555'])
+    await assert.rejects(use(tech, ticket.id, target.id, bad), { status: 400 });
+});
+
+test('apoio da outra equipe registra material no chamado; solicitante e técnico de fora não', async () => {
+  const target = await material(null, '10');
+  const ticket = await claimedTicket();
+  await setSupport(tech, ticket.id, electrician, true);
+  const outsider = (await makeUser('TI')).id;
+  const supportMove = await use(electrician, ticket.id, target.id);
+  assert.equal(supportMove.ticketTeamId, tiTeam);
+  assert.equal(supportMove.actorTeamId, eletricaTeam);
+  assert.equal(supportMove.itemTeamId, tiTeam);
+  await use(admin, ticket.id, target.id);
+  await use(tech, ticket.id, target.id);
+  // Employee (even the requester) gets 404 everywhere; GESTOR has no ticket detail either.
+  await assert.rejects(ticketMaterials(employee, ticket.id), { status: 404 });
+  await assert.rejects(use(employee, ticket.id, target.id), { status: 404 });
+  await assert.rejects(ticketMaterials(manager, ticket.id), { status: 404 });
+  await assert.rejects(use(manager, ticket.id, target.id), { status: 403 });
+  // Same-team technician who sees the ticket but is not in it.
+  const seen = await ticketMaterials(outsider, ticket.id);
+  assert.equal(seen.canRecord, false);
+  assert.equal(seen.movements.length, 3);
+  await assert.rejects(use(outsider, ticket.id, target.id), { status: 403 });
+  const support = await ticketMaterials(electrician, ticket.id);
+  assert.equal(support.canRecord, true);
+  assert.deepEqual(
+    support.movements.map((m) => [m.id, m.reversed]),
+    (
+      await db.stockMovement.findMany({
+        where: { ticketId: ticket.id },
+        orderBy: { sequence: 'asc' },
+      })
+    ).map((m) => [m.id, false]),
+  );
+  const listed = support.materials.find((m) => m.id === target.id);
+  assert.deepEqual(listed, { id: target.id, name: target.name, unit: 'METRO', teamName: 'TI' });
+  assert.equal((await ticketMaterials(admin, ticket.id)).canRecord, true);
+  // Removing the support removes access at once.
+  await setSupport(tech, ticket.id, electrician, false);
+  await assert.rejects(ticketMaterials(electrician, ticket.id), { status: 404 });
+  await assert.rejects(use(electrician, ticket.id, target.id), { status: 404 });
+  // Another team's ticket and an unknown ticket are 404 for a technician.
+  const eletricaTicket = await claimedTicket(eletricaTeam, electrician);
+  await assert.rejects(ticketMaterials(tech, eletricaTicket.id), { status: 404 });
+  await assert.rejects(use(tech, eletricaTicket.id, target.id), { status: 404 });
+  await assert.rejects(use(admin, 'chamado-inexistente', target.id), { status: 404 });
+  // Tools, inactive materials and items that do not exist.
+  const drill = await tool();
+  await assert.rejects(use(tech, ticket.id, drill.id), { message: 'Este item não é um material.' });
+  const old = await material(null, '5');
+  await deactivateItem(keeper, old.id, 'Fora de linha');
+  await assert.rejects(use(tech, ticket.id, old.id), { message: 'Este material está desativado.' });
+  await assert.rejects(use(tech, ticket.id, 'item-inexistente'), { status: 404 });
+  assert.ok(!support.materials.some((m) => m.id === old.id || m.id === drill.id));
+  assert.equal((await item(target.id)).balance.toString(), '7');
+  assert.equal(await db.stockMovement.count({ where: { ticketId: ticket.id } }), 3);
+});
+
+test('material esquecido: até 48 h depois de resolver vale; depois, não', async () => {
+  const target = await material(null, '10');
+  const ticket = await claimedTicket();
+  await changeStatus(tech, ticket.id, { status: 'RESOLVIDO', note: 'Tomada trocada.' });
+  await use(tech, ticket.id, target.id);
+  await db.ticket.update({
+    where: { id: ticket.id },
+    data: { resolvedAt: new Date(Date.now() - 47 * HOUR) },
+  });
+  await use(tech, ticket.id, target.id);
+  assert.equal((await ticketMaterials(tech, ticket.id)).canRecord, true);
+  await db.ticket.update({
+    where: { id: ticket.id },
+    data: { resolvedAt: new Date(Date.now() - 49 * HOUR) },
+  });
+  await assert.rejects(use(tech, ticket.id, target.id), { message: deadlineMessage, status: 400 });
+  await assert.rejects(use(admin, ticket.id, target.id), { message: deadlineMessage });
+  assert.equal((await ticketMaterials(tech, ticket.id)).canRecord, false);
+  assert.equal((await item(target.id)).balance.toString(), '8');
+});
+
+test('toque duplo com o mesmo requestId grava um movimento só', async () => {
+  const target = await material(null, '5');
+  const ticket = await claimedTicket();
+  const requestId = randomUUID();
+  const first = await use(tech, ticket.id, target.id, '1', requestId);
+  const again = await use(tech, ticket.id, target.id, '1', requestId);
+  assert.equal(again.id, first.id);
+  const racing = randomUUID();
+  const [a, b] = await Promise.all([
+    use(tech, ticket.id, target.id, '1', racing),
+    use(tech, ticket.id, target.id, '1', racing),
+  ]);
+  assert.equal(a.id, b.id);
+  assert.equal(await db.stockMovement.count({ where: { ticketId: ticket.id } }), 2);
+  assert.equal((await item(target.id)).balance.toString(), '3');
+  // The same form sent by another person is refused.
+  await setSupport(tech, ticket.id, electrician, true);
+  await assert.rejects(use(electrician, ticket.id, target.id, '1', requestId), { status: 409 });
+  // A double tap on "Estornar" also writes one reversal.
+  const reversal = randomUUID();
+  const [r1, r2] = await Promise.all([
+    reverse(tech, first.id, reversal),
+    reverse(tech, first.id, reversal),
+  ]);
+  assert.equal(r1.id, r2.id);
+  assert.equal((await reverse(tech, first.id, reversal)).id, r1.id);
+  assert.equal(await db.stockMovement.count({ where: { reversesId: first.id } }), 1);
+  assert.equal((await item(target.id)).balance.toString(), '4');
+});
+
+test('estorno devolve o saldo, encerra o alerta aberto por engano e não se repete', async () => {
+  const target = await material('2', '3');
+  const ticket = await claimedTicket();
+  const mistaken = await use(tech, ticket.id, target.id, '2');
+  const [opened] = await alerts(target.id);
+  assert.equal(opened.closedAt, null);
+  for (const reason of ['', ' ab ', 'x'.repeat(501)])
+    await assert.rejects(
+      reverseMovement(tech, mistaken.id, { reason, requestId: randomUUID() }),
+      { status: 400 },
+    );
+  const estorno = await reverse(tech, mistaken.id);
+  assert.equal(estorno.type, 'ESTORNO');
+  assert.equal(estorno.reversesId, mistaken.id);
+  assert.equal(estorno.quantity?.toString(), '2');
+  assert.equal(estorno.delta?.toString(), '2');
+  assert.equal(estorno.balanceAfter?.toString(), '3');
+  assert.equal(estorno.reason, 'Lançado no chamado errado');
+  assert.equal(estorno.ticketId, null);
+  assert.equal((await item(target.id)).balance.toString(), '3');
+  const [closed] = await alerts(target.id);
+  assert.ok(closed.closedAt);
+  assert.equal(closed.closedByMovementId, estorno.id);
+  const listed = await ticketMaterials(tech, ticket.id);
+  assert.deepEqual(
+    listed.movements.map((m) => [m.id, m.reversed]),
+    [[mistaken.id, true]],
+  );
+  await assert.rejects(reverse(keeper, mistaken.id), {
+    message: 'Este lançamento já foi estornado.',
+    status: 409,
+  });
+  // Two different reversal forms at the same time: one wins, the other gets 409.
+  const second = await use(tech, ticket.id, target.id, '1');
+  const results = await Promise.allSettled([reverse(tech, second.id), reverse(keeper, second.id)]);
+  assert.equal(results.filter((r) => r.status === 'fulfilled').length, 1);
+  const [failed] = results.filter((r) => r.status === 'rejected');
+  assert.equal(failed.reason.message, 'Este lançamento já foi estornado.');
+  assert.equal(failed.reason.status, 409);
+  assert.equal(await db.stockMovement.count({ where: { reversesId: second.id } }), 1);
+  assert.equal((await item(target.id)).balance.toString(), '3');
+  // An entry can be reversed by a keeper; reversals, adjustments and tool moves cannot.
+  const entry = await addEntry(keeper, target.id, { quantity: '4', requestId: randomUUID() });
+  const back = await reverse(keeper, entry.id);
+  assert.equal(back.delta?.toString(), '-4');
+  assert.equal((await item(target.id)).balance.toString(), '3');
+  await assert.rejects(reverse(admin, estorno.id), { status: 400 });
+  const adjust = await adjustCount(keeper, target.id, {
+    counted: '3',
+    reason: 'Contagem física',
+    requestId: randomUUID(),
+  });
+  await assert.rejects(reverse(admin, adjust.id), { status: 400 });
+  const drill = await tool();
+  const taken = await takeTool(tech, drill.id);
+  await assert.rejects(reverse(admin, taken.id), { status: 400 });
+  // Not for employees, GESTOR, unknown or foreign movements.
+  const fresh = await use(tech, ticket.id, target.id, '1');
+  await assert.rejects(reverse(employee, fresh.id), { status: 404 });
+  await assert.rejects(reverse(manager, fresh.id), { status: 403 });
+  await assert.rejects(reverse(admin, 'movimento-inexistente'), { status: 404 });
+  const org = await db.organization.create({
+    data: { name: 'Org estorno alheio ' + randomBytes(4).toString('hex') },
+  });
+  const foreignTeam = await teamId(org.id, 'TI');
+  const foreignUser = await db.user.create({
+    data: {
+      departmentId: (await db.department.create({ data: { organizationId: org.id, name: 'Setor alheio' } })).id,
+      name: 'Pessoa alheia',
+      username: `test.${randomBytes(6).toString('hex')}`,
+      organizationId: org.id,
+      role: 'ADMIN',
+      passwordHash: hash,
+      mustChangePassword: false,
+    },
+  });
+  const foreignItem = await db.stockItem.create({
+    data: {
+      organizationId: org.id,
+      teamId: foreignTeam,
+      kind: 'MATERIAL',
+      name: 'Cabo alheio',
+      unit: 'METRO',
+      balance: 5,
+    },
+  });
+  const foreignMove = await db.stockMovement.create({
+    data: {
+      organizationId: org.id,
+      itemId: foreignItem.id,
+      type: 'ENTRADA',
+      quantity: 5,
+      delta: 5,
+      balanceAfter: 5,
+      actorId: foreignUser.id,
+      itemTeamId: foreignTeam,
+    },
+  });
+  await assert.rejects(reverse(admin, foreignMove.id), { status: 404 });
+  assert.equal(await db.stockMovement.count({ where: { itemId: foreignItem.id } }), 1);
+  assert.equal((await item(foreignItem.id)).balance.toString(), '5');
+});
+
+test('autor estorna até 24 h; depois só o responsável', async () => {
+  const target = await material(null, '10');
+  const ticket = await claimedTicket();
+  await setSupport(tech, ticket.id, electrician, true);
+  const recent = await use(tech, ticket.id, target.id);
+  const old = await use(tech, ticket.id, target.id);
+  await db.stockMovement.update({
+    where: { id: old.id },
+    data: { createdAt: new Date(Date.now() - 25 * HOUR) },
+  });
+  // Another technician (not the author, not a keeper) never reverses.
+  await assert.rejects(reverse(electrician, recent.id), { message: reverseDenied, status: 403 });
+  await assert.rejects(reverse(tech, old.id), { message: reverseDenied, status: 403 });
+  await reverse(tech, recent.id);
+  await reverse(keeper, old.id);
+  const authored = await use(electrician, ticket.id, target.id);
+  await db.stockMovement.update({
+    where: { id: authored.id },
+    data: { createdAt: new Date(Date.now() - 30 * 24 * HOUR) },
+  });
+  await reverse(admin, authored.id);
+  assert.equal((await item(target.id)).balance.toString(), '10');
+  assert.equal(
+    await db.stockMovement.count({ where: { itemId: target.id, type: 'ESTORNO' } }),
+    3,
+  );
 });

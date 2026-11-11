@@ -297,7 +297,7 @@ export async function createTicket(actorId: string, input: unknown, requesterId?
 type Viewer = { id: string; role: Role; teamId: string | null };
 // Read scope: ADMIN sees everything; a technician sees the own team's tickets plus the ones
 // where they are support; the employee sees only the own requests; GESTOR has no detail.
-function canSee(user: Viewer, ticket: Ticket & { participants: { userId: string }[] }) {
+export function canSee(user: Viewer, ticket: Ticket & { participants: { userId: string }[] }) {
   if (user.role === 'ADMIN') return true;
   if (user.role === 'TI')
     return (

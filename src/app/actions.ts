@@ -279,6 +279,20 @@ export async function stockAction(_: FormState, form: FormData): Promise<FormSta
         });
         success = 'Contagem registrada.';
         break;
+      case 'uso-chamado':
+        await stock.recordTicketUse(user.id, value(form, 'ticketId'), {
+          itemId, quantity: value(form, 'quantity'), requestId: value(form, 'requestId'),
+        });
+        revalidatePath(`/chamados/${value(form, 'ticketId')}`);
+        success = 'Material registrado.';
+        break;
+      case 'estornar':
+        await stock.reverseMovement(user.id, value(form, 'movementId'), {
+          reason: value(form, 'reason'), requestId: value(form, 'requestId'),
+        });
+        revalidatePath('/chamados', 'layout');
+        success = 'Lançamento estornado.';
+        break;
       case 'pegar':
         await stock.takeTool(user.id, itemId);
         success = 'Ferramenta registrada com você.';
@@ -294,7 +308,7 @@ export async function stockAction(_: FormState, form: FormData): Promise<FormSta
       default:
         throw new AppError('Operação inválida.');
     }
-    revalidatePath('/estoque');
+    revalidatePath('/estoque', 'layout');
     return { success };
   } catch (error) {
     return failure(error);
