@@ -1,3 +1,4 @@
+import { stockReport } from './stock-analytics';
 import { db } from './db';
 import {
   analyticsOptions,
@@ -19,8 +20,9 @@ import { complexityLabels, formatDate, statusLabels, waitingLabels } from './lab
 import { organizationLabels as labels } from './organization-labels';
 import type { PdfReport, PdfSection } from './pdf-report';
 import type { SearchParams } from './period';
-export type PdfScreen = 'panorama' | 'filiais' | 'filial' | 'equipe' | 'tecnico' | 'chamados';
+export type PdfScreen = 'panorama' | 'filiais' | 'filial' | 'equipe' | 'tecnico' | 'chamados' | 'estoque';
 export const pdfScreens: PdfScreen[] = [
+  'estoque',
   'panorama',
   'filiais',
   'filial',
@@ -218,6 +220,22 @@ export async function buildManagementPdf(
     sections,
     ...(notice ? { notice } : {}),
   });
+  if (screen === 'estoque') {
+    const data = await stockReport(actorId, { ...input, pagina: '1' }, now, { rowLimit: maxRows + 1 });
+    const f = data.filters;
+    const teams = await db.team.findMany({ where: { organizationId: viewer.organizationId } });
+    const item = f.item ? await db.stockItem.findFirst({ where: { id: f.item, organizationId: viewer.organizationId } }) : null;
+    const lines = [`Período: ${f.from} a ${f.to} · ${f.zone}`];
+    if (f.team) lines.push(`Equipe do item: ${teams.find((t) => t.id === f.team)?.name || 'Não encontrada'}`);
+    if (f.actorTeam) lines.push(`Equipe de quem usou: ${teams.find((t) => t.id === f.actorTeam)?.name || 'Não encontrada'}`);
+    if (f.item) lines.push(`Item: ${item?.name || 'Não encontrado'}`);
+    const cut = data.consumption.length > maxRows || data.offTicket.total > maxRows || data.toolsOut.length > maxRows;
+    return report('Estoque — consumo e autorizações', lines, [
+      { heading: 'Consumo por item', table: { columns: ['Item','Equipe','Unidade','Quantidade'], rows: data.consumption.slice(0,maxRows).map((r) => [r.name,r.teamName,r.unit,r.quantity.replace('.', ',')]) } },
+      { heading: 'Usos fora de chamado', kpis: Object.entries(data.offTicket.counts).map(([k,v]) => [k,String(v)]), table: { columns: ['Data','Item','Quantidade','Quem fez','Conferência'], rows: data.offTicket.rows.slice(0,maxRows).map((r) => [formatDate(r.createdAt),r.name,r.quantity.replace('.', ','),r.actorName,r.state]) } },
+      { heading: 'Ferramentas fora do lugar', table: { columns: ['Ferramenta','Com quem','Desde','Há quanto tempo'], rows: data.toolsOut.slice(0,maxRows).map((r) => [r.name,r.holderName,formatDate(r.since),formatDuration(r.seconds)]) } },
+    ], cut ? `Exibição limitada a ${maxRows} linhas por tabela. Use o CSV para obter todos os registros.` : undefined);
+  }
   if (screen === 'panorama') {
     const [{ lines }, data] = await Promise.all([
       describe(actorId, input, now),

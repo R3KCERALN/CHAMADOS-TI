@@ -1,3 +1,5 @@
+import { formatDate, ticketNumber } from './labels';
+import { movementLabels, unitLabels } from './stock-labels';
 import { organizationLabels as labels } from './organization-labels';
 import type { ExportRow } from './analytics-service';
 export function csvCell(value: unknown) {
@@ -61,4 +63,12 @@ export function csvRow(row: ExportRow) {
       .map(csvCell)
       .join(';') + '\r\n'
   );
+}
+
+export const stockCsvHeader = ['Data','Tipo','Item','Equipe do item','Unidade','Quantidade','Saldo após','Quem fez','Equipe de quem fez','Chamado','Equipe do chamado','Estornado','Conferência'].map(csvCell).join(';') + '\r\n';
+export function stockCsvRow(row: import('./stock-analytics').StockExportRow) {
+  return [formatDate(row.createdAt), movementLabels[row.type as keyof typeof movementLabels], row.name, row.teamName,
+    row.unit ? unitLabels[row.unit as keyof typeof unitLabels] : '', row.quantity?.replace('.', ','), row.balanceAfter?.replace('.', ','),
+    row.actorName, row.actorTeamName, row.ticketNumber ? ticketNumber(row.ticketNumber) : '', row.ticketTeamName, row.reversed ? 'Sim' : 'Não', row.state]
+    .map(csvCell).join(';') + '\r\n';
 }

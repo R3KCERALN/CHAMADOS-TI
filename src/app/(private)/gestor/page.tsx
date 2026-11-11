@@ -66,6 +66,7 @@ export default async function ManagementPage({
   if (values.status) addFilter('Status', statusLabels[values.status as keyof typeof statusLabels]);
   return (
     <>
+      <Link className="button secondary" href="/gestor/estoque">Relatórios de estoque</Link>
       <div className="page-heading">
         <div>
           <span className="eyebrow">GESTÃO · VISÃO GERAL</span>
