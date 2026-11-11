@@ -1,3 +1,4 @@
+import { reviewAuthorization, authorizationList, purgeExpiredPhotos } from '../src/lib/stock-review';
 import { before, after, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
@@ -42,4 +43,40 @@ test('uso fora de chamado grava movimento e foto juntos; foto só para gestor, A
   assert.equal(await db.stockMovement.count({ where: { itemId: item.id } }), 0);
   assert.equal(await db.stockPhoto.count({ where: { movementId: m.id } }), 1);
   assert.equal(m.type, 'USO_AVULSO');
+});
+
+test('conferência só por gestor ou ADMIN; questionada exige observação e só sai por encerramento', async () => {
+  const m = await use();
+  for (const id of [f.tech, f.keeper, f.employee]) await assert.rejects(reviewAuthorization(id, m.id, { outcome: 'CONFERIDA' }));
+  await assert.rejects(reviewAuthorization(f.manager, m.id, { outcome: 'QUESTIONADA' }), { message: 'Escreva uma observação.' });
+  await reviewAuthorization(f.manager, m.id, { outcome: 'QUESTIONADA', note: 'Falta identificação' });
+  await assert.rejects(reviewAuthorization(f.admin, m.id, { outcome: 'CONFERIDA' }), { status: 409 });
+  await assert.rejects(reviewAuthorization(f.admin, m.id, { outcome: 'ENCERRADA' }), { message: 'Escreva uma observação.' });
+  await reviewAuthorization(f.admin, m.id, { outcome: 'ENCERRADA', note: 'Autorização confirmada' });
+  const list = await authorizationList(f.manager, { state: 'ENCERRADA' });
+  assert.equal(list.rows.find((r) => r.id === m.id)?.state, 'ENCERRADA');
+  await assert.rejects(authorizationList(f.tech, {}), { status: 403 });
+});
+test('duas conferências simultâneas: só uma vale', async () => {
+  const m = await use();
+  const results = await Promise.allSettled([reviewAuthorization(f.manager, m.id, { outcome: 'CONFERIDA' }), reviewAuthorization(f.admin, m.id, { outcome: 'QUESTIONADA', note: 'Conferir' })]);
+  assert.equal(results.filter((r) => r.status === 'fulfilled').length, 1);
+  assert.equal(await db.stockReview.count({ where: { movementId: m.id } }), 1);
+});
+test('foto conferida há mais de 1 ano é apagada; questionada não; encerrada vence 1 ano depois do encerramento', async () => {
+  const old = new Date('2024-01-01T00:00:00Z'), now = new Date('2026-01-01T00:00:00Z');
+  const confirmed = await use(), questioned = await use(), closed = await use();
+  const c = await reviewAuthorization(f.manager, confirmed.id, { outcome: 'CONFERIDA' });
+  const q = await reviewAuthorization(f.manager, questioned.id, { outcome: 'QUESTIONADA', note: 'Conferir' });
+  const qc = await reviewAuthorization(f.manager, closed.id, { outcome: 'QUESTIONADA', note: 'Conferir' });
+  await db.stockReview.updateMany({ where: { id: { in: [c.id, q.id, qc.id] } }, data: { createdAt: old } });
+  const end = await reviewAuthorization(f.manager, closed.id, { outcome: 'ENCERRADA', note: 'Conferido' });
+  await db.stockReview.update({ where: { id: end.id }, data: { createdAt: new Date('2025-06-01T00:00:00Z') } });
+  await purgeExpiredPhotos(now);
+  await assert.rejects(authorizationPhoto(f.admin, confirmed.id), { status: 404, message: 'Foto removida após o prazo de guarda.' });
+  assert.ok(await authorizationPhoto(f.admin, questioned.id)); assert.ok(await authorizationPhoto(f.admin, closed.id));
+  await purgeExpiredPhotos(new Date('2026-06-01T00:00:00Z'));
+  await assert.rejects(authorizationPhoto(f.admin, closed.id), { status: 404 });
+  assert.ok(await db.stockMovement.findUnique({ where: { id: confirmed.id } }));
+  assert.equal(await db.stockReview.count({ where: { movementId: closed.id } }), 2);
 });

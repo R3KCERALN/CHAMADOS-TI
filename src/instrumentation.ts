@@ -12,5 +12,7 @@ export async function register() {
     }
     const { startPushWorker } = await import('./lib/push-worker');
     startPushWorker();
+    const { startStockMaintenance } = await import('./lib/stock-review');
+    startStockMaintenance();
   }
 }

@@ -11,6 +11,7 @@ import { requireActionUser, SESSION_COOKIE } from '@/lib/auth';
 import { login, logout, changePassword } from '@/lib/auth-service';
 import * as service from '@/lib/services';
 import { saveCompany, saveUnit } from '@/lib/organization-service';
+import { reviewAuthorization } from '@/lib/stock-review';
 import * as stock from '@/lib/stock-service';
 export type FormState = {
   error?: string;
@@ -278,6 +279,13 @@ export async function stockAction(_: FormState, form: FormData): Promise<FormSta
           requestId: value(form, 'requestId'),
         });
         success = 'Contagem registrada.';
+        break;
+      case 'conferir':
+        await reviewAuthorization(user.id, value(form, 'movementId'), {
+          outcome: value(form, 'outcome') as import('@/generated/prisma/client').StockReviewOutcome,
+          note: value(form, 'note'),
+        });
+        success = 'Conferência registrada.';
         break;
       case 'uso-chamado':
         await stock.recordTicketUse(user.id, value(form, 'ticketId'), {
