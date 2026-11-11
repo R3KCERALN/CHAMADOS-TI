@@ -47,7 +47,12 @@ export function AppNavigation({ role, lowStock = 0 }: { role: Role; lowStock?: n
               aria-current={active ? 'page' : undefined}
             >
               <Icon size={19} aria-hidden="true" />
-              {item.label}{item.href === "/estoque" && lowStock > 0 && <span className="nav-badge" aria-label={`${lowStock} materiais acabando`}>{lowStock}</span>}
+              {item.label}
+              {item.href === '/estoque' && lowStock > 0 && (
+                <span className="nav-badge" aria-label={`${lowStock} materiais acabando`}>
+                  {lowStock}
+                </span>
+              )}
             </Link>
           );
         })}
@@ -80,7 +85,9 @@ function navigationItems(role: Role): Item[] {
           },
         ]
       : []),
-    ...(['TI','ADMIN','GESTOR'].includes(role) ? [{ href: '/estoque', label: 'Estoque', icon: Boxes }] : []),
+    ...(['TI', 'ADMIN', 'GESTOR'].includes(role)
+      ? [{ href: '/estoque', label: 'Estoque', icon: Boxes }]
+      : []),
     ...(role === 'ADMIN'
       ? [
           {
@@ -120,7 +127,12 @@ export function MobileNavigation({ role, lowStock = 0 }: { role: Role; lowStock?
             className={`${item.quick ? 'quick' : ''}${active ? ' active' : ''}`}
             aria-current={active ? 'page' : undefined}
           >
-            {item.mobileLabel || item.label}{item.href === "/estoque" && lowStock > 0 && <span className="nav-badge" aria-label={`${lowStock} materiais acabando`}>{lowStock}</span>}
+            {item.mobileLabel || item.label}
+            {item.href === '/estoque' && lowStock > 0 && (
+              <span className="nav-badge" aria-label={`${lowStock} materiais acabando`}>
+                {lowStock}
+              </span>
+            )}
           </Link>
         );
       })}

@@ -561,7 +561,7 @@ export default async function TicketPage({
           <p className="aside-note">Cada atualização fica registrada no histórico deste chamado.</p>
         </aside>
       </div>
-      {tech && <TicketMaterials actorId={user.id} ticketId={id}/>}
+      {tech && <TicketMaterials actorId={user.id} ticketId={id} />}
     </>
   );
 }

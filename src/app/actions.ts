@@ -293,14 +293,17 @@ export async function stockAction(_: FormState, form: FormData): Promise<FormSta
         break;
       case 'uso-chamado':
         await stock.recordTicketUse(user.id, value(form, 'ticketId'), {
-          itemId, quantity: value(form, 'quantity'), requestId: value(form, 'requestId'),
+          itemId,
+          quantity: value(form, 'quantity'),
+          requestId: value(form, 'requestId'),
         });
         revalidatePath(`/chamados/${value(form, 'ticketId')}`);
         success = 'Material registrado.';
         break;
       case 'estornar':
         await stock.reverseMovement(user.id, value(form, 'movementId'), {
-          reason: value(form, 'reason'), requestId: value(form, 'requestId'),
+          reason: value(form, 'reason'),
+          requestId: value(form, 'requestId'),
         });
         revalidatePath('/chamados', 'layout');
         success = 'Lançamento estornado.';

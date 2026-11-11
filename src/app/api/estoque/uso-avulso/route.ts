@@ -15,12 +15,27 @@ export async function POST(request: Request) {
     if (!/^\d+$/.test(length) || Number(length) > MAX_PHOTO_BYTES + 64 * 1024)
       throw new AppError('O envio passa do tamanho permitido.', 413);
     let form: FormData;
-    try { form = await request.formData(); } catch { throw new AppError('Formulário inválido.'); }
+    try {
+      form = await request.formData();
+    } catch {
+      throw new AppError('Formulário inválido.');
+    }
     const photo = form.get('photo');
     if (!(photo instanceof File)) throw new AppError('Anexe uma foto da autorização.');
     const processed = await processAuthorizationPhoto(new Uint8Array(await photo.arrayBuffer()));
-    const text = (key: string) => typeof form.get(key) === 'string' ? String(form.get(key)) : '';
-    const movement = await recordOffTicketUse(user.id, { itemId: text('itemId'), quantity: text('quantity'), note: text('note'), requestId: text('requestId') }, processed);
+    const text = (key: string) => (typeof form.get(key) === 'string' ? String(form.get(key)) : '');
+    const movement = await recordOffTicketUse(
+      user.id,
+      {
+        itemId: text('itemId'),
+        quantity: text('quantity'),
+        note: text('note'),
+        requestId: text('requestId'),
+      },
+      processed,
+    );
     return Response.json({ ok: true, movementId: movement.id }, { headers: privateHeaders });
-  } catch (error) { return apiError(error); }
+  } catch (error) {
+    return apiError(error);
+  }
 }

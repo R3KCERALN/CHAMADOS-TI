@@ -586,8 +586,13 @@ async function claimedTicket(team = tiTeam, assignee = tech) {
   await claimTicket(assignee, ticket.id);
   return ticket;
 }
-const use = (actorId: string, ticketId: string, itemId: string, quantity = '1', requestId?: string) =>
-  recordTicketUse(actorId, ticketId, { itemId, quantity, requestId: requestId ?? randomUUID() });
+const use = (
+  actorId: string,
+  ticketId: string,
+  itemId: string,
+  quantity = '1',
+  requestId?: string,
+) => recordTicketUse(actorId, ticketId, { itemId, quantity, requestId: requestId ?? randomUUID() });
 const reverse = (actorId: string, movementId: string, requestId?: string) =>
   reverseMovement(actorId, movementId, {
     reason: 'Lançado no chamado errado',
@@ -598,9 +603,7 @@ test('oito usos simultâneos não perdem baixa e o aviso dispara uma vez', async
   const target = await material('2', '8');
   const ticket = await claimedTicket();
   assert.equal((await alerts(target.id)).length, 0);
-  const moves = await Promise.all(
-    Array.from({ length: 8 }, () => use(tech, ticket.id, target.id)),
-  );
+  const moves = await Promise.all(Array.from({ length: 8 }, () => use(tech, ticket.id, target.id)));
   assert.equal(new Set(moves.map((m) => m.id)).size, 8);
   const after = await item(target.id);
   assert.equal(after.balance.toString(), '0');
@@ -757,10 +760,9 @@ test('estorno devolve o saldo, encerra o alerta aberto por engano e não se repe
   const [opened] = await alerts(target.id);
   assert.equal(opened.closedAt, null);
   for (const reason of ['', ' ab ', 'x'.repeat(501)])
-    await assert.rejects(
-      reverseMovement(tech, mistaken.id, { reason, requestId: randomUUID() }),
-      { status: 400 },
-    );
+    await assert.rejects(reverseMovement(tech, mistaken.id, { reason, requestId: randomUUID() }), {
+      status: 400,
+    });
   const estorno = await reverse(tech, mistaken.id);
   assert.equal(estorno.type, 'ESTORNO');
   assert.equal(estorno.reversesId, mistaken.id);
@@ -817,7 +819,9 @@ test('estorno devolve o saldo, encerra o alerta aberto por engano e não se repe
   const foreignTeam = await teamId(org.id, 'TI');
   const foreignUser = await db.user.create({
     data: {
-      departmentId: (await db.department.create({ data: { organizationId: org.id, name: 'Setor alheio' } })).id,
+      departmentId: (
+        await db.department.create({ data: { organizationId: org.id, name: 'Setor alheio' } })
+      ).id,
       name: 'Pessoa alheia',
       username: `test.${randomBytes(6).toString('hex')}`,
       organizationId: org.id,
@@ -875,10 +879,7 @@ test('autor estorna até 24 h; depois só o responsável', async () => {
   });
   await reverse(admin, authored.id);
   assert.equal((await item(target.id)).balance.toString(), '10');
-  assert.equal(
-    await db.stockMovement.count({ where: { itemId: target.id, type: 'ESTORNO' } }),
-    3,
-  );
+  assert.equal(await db.stockMovement.count({ where: { itemId: target.id, type: 'ESTORNO' } }), 3);
 });
 
 test('leituras de estoque respeitam papel e organização', async () => {
@@ -886,38 +887,77 @@ test('leituras de estoque respeitam papel e organização', async () => {
   const target = await material('2', '1');
   await assert.rejects(stock.stockOverview(employee, {}), { status: 404 });
   await assert.rejects(stock.lowStockCount(employee), { status: 404 });
-  assert.ok((await stock.stockOverview(manager, { aba: 'materiais', q: target.name })).items.some((i) => i.id === target.id));
+  assert.ok(
+    (await stock.stockOverview(manager, { aba: 'materiais', q: target.name })).items.some(
+      (i) => i.id === target.id,
+    ),
+  );
   assert.ok(await stock.lowStockCount(manager));
   const org = await db.organization.create({ data: { name: 'Leitura alheia' } });
-  const foreign = await db.stockItem.create({ data: { organizationId: org.id, teamId: await teamId(org.id, 'TI'), kind: 'FERRAMENTA', name: target.name } });
-  assert.ok(!(await stock.stockOverview(tech, { aba: 'materiais', q: target.name })).items.some((i) => i.id === foreign.id));
+  const foreign = await db.stockItem.create({
+    data: {
+      organizationId: org.id,
+      teamId: await teamId(org.id, 'TI'),
+      kind: 'FERRAMENTA',
+      name: target.name,
+    },
+  });
+  assert.ok(
+    !(await stock.stockOverview(tech, { aba: 'materiais', q: target.name })).items.some(
+      (i) => i.id === foreign.id,
+    ),
+  );
   await assert.rejects(stock.stockItemDetail(admin, foreign.id), { status: 404 });
   const detail = await stock.stockItemDetail(keeper, target.id);
-  assert.equal(detail.item.id, target.id); assert.equal(detail.keeper, true);
+  assert.equal(detail.item.id, target.id);
+  assert.equal(detail.keeper, true);
 });
 
 test('toque duplo ao criar ferramenta ou material sem entrada devolve o item criado', async () => {
-  for (const kind of ['FERRAMENTA','MATERIAL']) {
-    const input = { kind, name: itemName('Novo'), teamId: tiTeam, unit: 'METRO', minimum: '2', requestId: randomUUID() };
-    const [a,b] = await Promise.all([createItem(keeper, input), createItem(keeper, input)]);
-    assert.equal(a.item.id, b.item.id); assert.equal(a.movement, null);
+  for (const kind of ['FERRAMENTA', 'MATERIAL']) {
+    const input = {
+      kind,
+      name: itemName('Novo'),
+      teamId: tiTeam,
+      unit: 'METRO',
+      minimum: '2',
+      requestId: randomUUID(),
+    };
+    const [a, b] = await Promise.all([createItem(keeper, input), createItem(keeper, input)]);
+    assert.equal(a.item.id, b.item.id);
+    assert.equal(a.movement, null);
     assert.equal((await createItem(keeper, input)).item.id, a.item.id);
     assert.equal(await db.stockItem.count({ where: { organizationId, name: input.name } }), 1);
     await assert.rejects(createItem(admin, input), { status: 409 });
-    await assert.rejects(createItem(keeper, { ...input, requestId: randomUUID() }), { message: 'Já existe um item com este nome.' });
+    await assert.rejects(createItem(keeper, { ...input, requestId: randomUUID() }), {
+      message: 'Já existe um item com este nome.',
+    });
   }
 });
 test('reutilizar requestId em outro item ou tipo não dá sucesso falso; funcionário continua 404', async () => {
-  const a = await material(null, '5'), b = await material(null, '5');
+  const a = await material(null, '5'),
+    b = await material(null, '5');
   const requestId = randomUUID();
   await addEntry(keeper, a.id, { quantity: '1', requestId });
   await assert.rejects(addEntry(keeper, b.id, { quantity: '1', requestId }), { status: 409 });
-  await assert.rejects(adjustCount(keeper, a.id, { counted: '5', reason: 'Contagem física', requestId }), { status: 409 });
-  await assert.rejects(addEntry(employee, a.id, { quantity: '1', requestId: 'inválido' }), { status: 404 });
+  await assert.rejects(
+    adjustCount(keeper, a.id, { counted: '5', reason: 'Contagem física', requestId }),
+    { status: 409 },
+  );
+  await assert.rejects(addEntry(employee, a.id, { quantity: '1', requestId: 'inválido' }), {
+    status: 404,
+  });
 });
 test('ajuste com delta fora de NUMERIC(12,3) devolve erro de campo, sem gravar', async () => {
   const target = await material(null, '0');
   await db.stockItem.update({ where: { id: target.id }, data: { balance: '-999999999.999' } });
-  await assert.rejects(adjustCount(keeper, target.id, { counted: '999999999.999', reason: 'Contagem física', requestId: randomUUID() }), { status: 400 });
+  await assert.rejects(
+    adjustCount(keeper, target.id, {
+      counted: '999999999.999',
+      reason: 'Contagem física',
+      requestId: randomUUID(),
+    }),
+    { status: 400 },
+  );
   assert.equal((await item(target.id)).balance.toString(), '-999999999.999');
 });

@@ -78,6 +78,14 @@ Atendimento rápido: escolha uma pessoa cadastrada ou informe somente o nome de 
 
 Somente o ADMIN cria/edita usuários. A V1 utiliza exclusivamente desativação, mesmo para usuários sem histórico. Chamados antigos mantêm referências válidas. Alterações cadastrais encerram sessões existentes para aplicar permissões imediatamente. ADMIN não pode desativar ou rebaixar a própria conta. Outro ADMIN pode transferir atendimentos de técnicos desativados.
 
+### Estoque
+
+Estoque único de ferramentas e materiais de manutenção, organizado por equipe. FUNCIONARIO não acessa. Técnicos de qualquer equipe pegam/devolvem ferramentas e registram materiais no chamado de que participam (até 48 horas após a resolução) ou fora dele, com foto obrigatória da autorização. Uso acima do saldo não trava o trabalho: marca **Conferir saldo**. O autor pode estornar lançamentos por 24 horas.
+
+ADMIN marca técnicos como **Responsável de estoque** (recomenda-se um por equipe). Eles e o ADMIN cadastram/editam/desativam itens, dão entrada, ajustam contagens com motivo, devolvem ferramentas de outros e estornam a qualquer momento. GESTOR/ADMIN conferem autorizações e acessam relatórios em tela, CSV e PDF. A foto só é visível para seu autor, GESTOR e ADMIN. JPEG/PNG/WebP até 5 MB são recomprimidos para WebP sem metadados. Fotos conferidas são removidas após um ano; questionadas só um ano após encerramento. Histórico permanece.
+
+Ao chegar ao mínimo, abre um único alerta por queda, com contador **Acabando**; entrada acima do mínimo encerra-o. TI/GESTOR/ADMIN podem marcar **Pedido já feito ao financeiro**. O pedido continua fora do sistema. Sem preço, fornecedor, compras ou estoque por filial.
+
 ## Atualizar uma instalação existente
 
 Preserve o `.env`, o volume e todas as migrations anteriores. Com a aplicação parada:
@@ -137,6 +145,8 @@ Abra **http://localhost:3002**. O comando cria **somente `central_suporte_demo`*
 - As contas não administrativas usam a senha aleatória `DEMO_PASSWORD` de `.env.demo`. Todos os usuários ativos precisam trocar a senha no primeiro login. O seed não redefine senhas ao ser executado novamente.
 
 ## Modelo de dados
+
+Estoque: `StockItem` (saldo/posse atual), `StockMovement` (histórico imutável com snapshots de equipes e requestId), `StockPhoto` (binário no PostgreSQL), `StockReview` (conferências só de acréscimo), `StockAlert` (ciclo de mínimo/pedido) e `StockItemAudit` (auditoria do cadastro). `User.stockKeeper` marca responsáveis; `PushDelivery` referencia um evento de chamado ou um alerta de estoque, exclusivamente.
 
 - **Organization**: grupo/cliente da instalação, estado e timestamps.
 - **Company**: CNPJ/pessoa jurídica, chamada Filial, com nome de exibição, razão social opcional, estado e timestamps.
@@ -268,7 +278,7 @@ Não há SaaS contratado ou SDK Firebase/Supabase. **Web Push padrão precisa da
 
 ### Dispositivos e privacidade
 
-A ação **Ativar notificações** aparece nas telas autenticadas operacionais; jamais pedimos permissão no carregamento. Permitido, negado, não solicitado, indisponível e não configurado têm estados próprios. O usuário pode desativar o dispositivo. Há até 20 subscriptions ativas por usuário; cada vínculo persiste User + Organization, sem aceitar esses IDs no corpo da requisição. `/api/push/subscriptions` exige sessão, valida Origin nas mutações, JSON estrito e tamanho limitado. Somente a chave VAPID pública é retornada ao navegador.
+A ação **Ativar notificações** aparece nas telas autenticadas, inclusive para GESTOR; jamais pedimos permissão no carregamento. Permitido, negado, não solicitado, indisponível e não configurado têm estados próprios. O usuário pode desativar o dispositivo. Há até 20 subscriptions ativas por usuário; cada vínculo persiste User + Organization, sem aceitar esses IDs no corpo da requisição. `/api/push/subscriptions` exige sessão, valida Origin nas mutações, JSON estrito e tamanho limitado. Somente a chave VAPID pública é retornada ao navegador.
 
 Ao voltar à mesma conta, um dispositivo já ativo é associado à sessão atual sem novo pedido de permissão; endpoints rotacionados/desativados exigem reativação. Logout remove os vínculos daquela sessão/dispositivo; mudança de senha ou cadastro desativa os vínculos do usuário. Sessão naturalmente expirada não cancela o opt-in push: receber avisos com o app fechado é intencional; abrir o chamado exige autenticação. Desativação de usuário/organização e permissões são verificadas novamente antes do envio. Troca de conta no mesmo navegador desfaz a subscription anterior. Endpoints e chaves de dispositivos são dados sensíveis e não entram em logs ou CSV.
 
@@ -285,6 +295,7 @@ Payload: número do chamado, tipo do evento e filial; sem descrição, comentár
 | Comentário do solicitante cadastrado | Responsável e apoios atuais          |
 | Comentário de TI/ADMIN               | Solicitante cadastrado               |
 | Resolução                            | Solicitante cadastrado               |
+| Material chegou ao mínimo | Técnicos das duas equipes, gestores e ADMIN (uma vez por queda) |
 
 Sempre excluímos o autor. Atendimento Rápido não dispara alerta coletivo; solicitante textual nunca recebe push. GESTOR não recebe links operacionais aos quais não tem acesso. Apoio removido, assumir e mudanças intermediárias de status atualizam telas, mas não geram push extra.
 

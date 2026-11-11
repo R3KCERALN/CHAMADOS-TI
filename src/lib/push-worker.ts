@@ -60,52 +60,67 @@ export async function dispatchPushBatch(sender: PushSender = send) {
       let payload: string, sourceId: string;
       if (alert) {
         const user = sub.user;
-        if (!sub.active || !sub.organization.active || !user.active || user.mustChangePassword ||
-          !['TI','GESTOR','ADMIN'].includes(user.role) || user.organizationId !== alert.organizationId ||
-          sub.organizationId !== alert.organizationId || alert.closedAt !== null || !alert.item.active ||
-          job.createdAt.getTime() < Date.now() - 24 * 60 * 60 * 1000 || !validPushEndpoint(sub.endpoint)) {
-          await finish('CANCELLED'); return;
+        if (
+          !sub.active ||
+          !sub.organization.active ||
+          !user.active ||
+          user.mustChangePassword ||
+          !['TI', 'GESTOR', 'ADMIN'].includes(user.role) ||
+          user.organizationId !== alert.organizationId ||
+          sub.organizationId !== alert.organizationId ||
+          alert.closedAt !== null ||
+          !alert.item.active ||
+          job.createdAt.getTime() < Date.now() - 24 * 60 * 60 * 1000 ||
+          !validPushEndpoint(sub.endpoint)
+        ) {
+          await finish('CANCELLED');
+          return;
         }
-        payload = JSON.stringify({ title: 'Material acabando', body: alert.item.name, url: '/estoque?aba=acabando', tag: alert.id });
+        payload = JSON.stringify({
+          title: 'Material acabando',
+          body: alert.item.name,
+          url: '/estoque?aba=acabando',
+          tag: alert.id,
+        });
         sourceId = alert.id;
       } else {
         if (!event) return finish('CANCELLED');
-      const ticket = event.ticket;
-      const user = sub.user;
-      const canRead =
-        user.role === 'ADMIN' ||
-        (user.role === 'TI' &&
-          (user.teamId === ticket.teamId ||
-            ticket.participants.some((p) => p.userId === user.id))) ||
-        (user.role === 'FUNCIONARIO' && ticket.requesterId === user.id);
-      const stillRecipient =
-        !['CRIADO', 'EQUIPE_ALTERADA'].includes(event.type) ||
-        (user.role === 'TI' && user.teamId === ticket.teamId);
-      const expired = job.createdAt.getTime() < Date.now() - 24 * 60 * 60 * 1000;
-      if (
-        !sub.active ||
-        !sub.organization.active ||
-        !user.active ||
-        user.mustChangePassword ||
-        user.id === event.actorId ||
-        user.organizationId !== ticket.organizationId ||
-        sub.organizationId !== ticket.organizationId ||
-        !canRead ||
-        !stillRecipient ||
-        expired ||
-        !validPushEndpoint(sub.endpoint)
-      ) {
-        await finish('CANCELLED');
-        return;
-      }
-      payload = JSON.stringify({
-        title: `${ticketNumber(ticket.number)} · ${titles[event.type] || 'Chamado atualizado'}`,
-        body: ticket.company?.displayName || 'Central de Suporte',
-        url: `/notificacoes/${ticket.id}`,
-        tag: event.id,
-      });
+        const ticket = event.ticket;
+        const user = sub.user;
+        const canRead =
+          user.role === 'ADMIN' ||
+          (user.role === 'TI' &&
+            (user.teamId === ticket.teamId ||
+              ticket.participants.some((p) => p.userId === user.id))) ||
+          (user.role === 'FUNCIONARIO' && ticket.requesterId === user.id);
+        const stillRecipient =
+          !['CRIADO', 'EQUIPE_ALTERADA'].includes(event.type) ||
+          (user.role === 'TI' && user.teamId === ticket.teamId);
+        const expired = job.createdAt.getTime() < Date.now() - 24 * 60 * 60 * 1000;
+        if (
+          !sub.active ||
+          !sub.organization.active ||
+          !user.active ||
+          user.mustChangePassword ||
+          user.id === event.actorId ||
+          user.organizationId !== ticket.organizationId ||
+          sub.organizationId !== ticket.organizationId ||
+          !canRead ||
+          !stillRecipient ||
+          expired ||
+          !validPushEndpoint(sub.endpoint)
+        ) {
+          await finish('CANCELLED');
+          return;
+        }
+        payload = JSON.stringify({
+          title: `${ticketNumber(ticket.number)} · ${titles[event.type] || 'Chamado atualizado'}`,
+          body: ticket.company?.displayName || 'Central de Suporte',
+          url: `/notificacoes/${ticket.id}`,
+          tag: event.id,
+        });
 
-      sourceId = event.id;
+        sourceId = event.id;
       }
       try {
         await sender(

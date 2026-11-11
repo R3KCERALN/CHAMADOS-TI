@@ -12,7 +12,30 @@ export default async function NewStockItem() {
   if (user.role !== 'ADMIN' && !(user.role === 'TI' && user.stockKeeper)) notFound();
   await stockActor(db, user.id, 'keep');
   const teams = await teamOptions(db, user.organizationId);
-  return <><div className="page-heading"><h1>Novo item</h1><Link href="/estoque">Voltar ao estoque</Link></div><section className="panel padded"><ActionForm action={stockAction}>
-    <StockHidden intent="criar"/><label>Tipo<select name="kind"><option value="FERRAMENTA">Ferramenta</option><option value="MATERIAL">Material</option></select></label><ItemFields teams={teams}/><label>Quantidade inicial (material)<input name="initialQuantity" inputMode="decimal"/></label><Submit>Criar item</Submit>
-  </ActionForm></section></>;
+  return (
+    <>
+      <div className="page-heading">
+        <h1>Novo item</h1>
+        <Link href="/estoque">Voltar ao estoque</Link>
+      </div>
+      <section className="panel padded">
+        <ActionForm action={stockAction}>
+          <StockHidden intent="criar" />
+          <label>
+            Tipo
+            <select name="kind" aria-label="Tipo">
+              <option value="FERRAMENTA">Ferramenta</option>
+              <option value="MATERIAL">Material</option>
+            </select>
+          </label>
+          <ItemFields teams={teams} />
+          <label>
+            Quantidade inicial (material)
+            <input name="initialQuantity" inputMode="decimal" />
+          </label>
+          <Submit>Criar item</Submit>
+        </ActionForm>
+      </section>
+    </>
+  );
 }

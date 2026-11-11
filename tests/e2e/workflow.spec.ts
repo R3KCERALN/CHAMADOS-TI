@@ -51,7 +51,9 @@ async function createUser(
       .selectOption({ label: 'E2E Castanhal' });
   await page.getByLabel('Senha temporária', { exact: true }).fill(temporary);
   await page.getByRole('button', { name: 'Criar usuário', exact: true }).click();
-  await expect(page.getByRole('status')).toContainText('Usuário criado');
+  await expect(page.getByRole('status').filter({ hasText: 'Usuário criado' })).toContainText(
+    'Usuário criado',
+  );
 }
 async function noOverflow(page: Page) {
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
@@ -128,7 +130,7 @@ test('cenário completo no navegador: admin, funcionário, TI, histórico e aten
   await accessible(page);
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto('/admin/usuarios');
-  expect(await page.locator('.mobile-nav a').count()).toBeLessThanOrEqual(5);
+  expect(await page.locator('.mobile-nav a').count()).toBeLessThanOrEqual(6);
   await expect(page.locator('.mobile-nav a[aria-current="page"]')).toHaveText('Admin');
   const mobileNavigation = page.locator('.mobile-nav');
   expect(
@@ -188,7 +190,7 @@ test('cenário completo no navegador: admin, funcionário, TI, histórico e aten
   await page.goto('/chamados?filtro=novos');
   await expect(page.getByRole('searchbox', { name: 'Buscar chamado' })).toBeVisible();
   await expect(page.getByText('Mais filtros', { exact: true })).toBeVisible();
-  expect(await page.locator('.mobile-nav a').count()).toBeLessThanOrEqual(5);
+  expect(await page.locator('.mobile-nav a').count()).toBeLessThanOrEqual(6);
   await expect(page.locator('.mobile-nav a[aria-current="page"]')).toHaveText('Chamados');
   await expect(
     page.getByRole('link').filter({ hasText: 'Não consigo abrir o sistema financeiro' }),

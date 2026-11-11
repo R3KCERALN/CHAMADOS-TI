@@ -79,6 +79,8 @@ Containers permanentes têm `restart: unless-stopped`: após reboot voltam autom
 
 ## Backup
 
+Fotos de autorização do estoque ficam no PostgreSQL e aumentam o dump (até cerca de 2 MB cada, normalmente bem menos). Fotos conferidas são apagadas um ano após a conferência; questionadas, um ano após encerramento. Continuam nos backups antigos até expirarem `BACKUP_RETENTION_DAYS` e a retenção da cópia externa. Restore reativa as fotos presentes no dump; a manutenção automática as remove novamente na hora seguinte, preservando movimentos e conferências.
+
 ```bash
 ./ops/backup.sh
 ```
@@ -175,3 +177,7 @@ node --env-file=.env.production-test node_modules/@playwright/test/cli.js test -
 ```
 
 A configuração de teste recusa outros hostnames, bancos e projetos; cria dados exclusivamente para validação. Não apontá-la à produção real. Após o ensaio, pare os serviços desse projeto, preservando ou removendo apenas seus volumes mediante decisão explícita. Testes de unidade/integração e E2E usuais continuam separados via `npm test`/`npm run test:e2e`.
+
+### Limites de upload do estoque
+
+O Caddy aceita 6 MB exclusivamente em `/api/estoque/uso-avulso` e 256 KB nas demais rotas, com matchers sem sobreposição. O app exige Origin, sessão operacional e Content-Length; a foto tem limite de 5 MB, tipo verificado pelo conteúdo e até 40 milhões de pixels na leitura. Server Actions mantêm seu limite próprio. A limpeza de fotos roda no Node persistente independentemente do VAPID.

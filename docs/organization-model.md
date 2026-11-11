@@ -97,3 +97,7 @@ Após atualizar o banco real, o ADMIN deve cadastrar as Companies reais e associ
 `npm run demo:setup` atualiza apenas `central_suporte_demo`, exige `SEED_DEMO=true` e preserva senhas existentes. A organização fictícia recebe quatro Companies: Norte/Oeste sem Units e Sul/Leste com duas Units cada. CNPJs são gerados sinteticamente com dígitos verificadores válidos, sem consulta ou associação declarada a pessoas jurídicas reais; não usar esses documentos fora da demonstração.
 
 Os 54 chamados anteriores recebem localizações fictícias somente nesse banco. Seis atendimentos rápidos adicionais demonstram pessoas cadastradas e os nomes “João - Reposição”, “Marcos - Caixa” e “Ana - Estoque”. A repetição do setup não duplica esses seis chamados. Novos dados inseridos manualmente fora desse conjunto são preservados.
+
+## Estoque
+
+StockItem, StockMovement, StockPhoto, StockReview, StockAlert e StockItemAudit têm organizationId e triggers contra vínculos cruzados. O estoque é único por organização; equipe do item organiza listas, sem restringir operação entre técnicos. Movimentos preservam snapshots das equipes do item, ator e chamado. A organização sempre vem do ator; fotos só podem ser lidas pelo autor ou GESTOR/ADMIN da mesma organização.

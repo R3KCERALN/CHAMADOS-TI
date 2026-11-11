@@ -77,8 +77,16 @@ export async function withRequestId<T>(
         'Este formulário já foi enviado por outra pessoa. Recarregue a página.',
         409,
       );
-    if (expected && Object.entries(expected).some(([key, value]) => existing[key as keyof StockMovement] !== value))
-      throw new AppError('Este formulário já foi usado para outro lançamento. Recarregue a página.', 409);
+    if (
+      expected &&
+      Object.entries(expected).some(
+        ([key, value]) => existing[key as keyof StockMovement] !== value,
+      )
+    )
+      throw new AppError(
+        'Este formulário já foi usado para outro lançamento. Recarregue a página.',
+        409,
+      );
     return replay(existing);
   }
 }
@@ -146,7 +154,8 @@ export async function applyMaterialMovement(
   },
 ): Promise<StockMovement> {
   if (item.kind !== 'MATERIAL') throw new AppError('Este item não é um material.');
-  if (move.delta.abs().gt(MAX_BALANCE)) throw new AppError('A diferença da contagem passa do limite permitido. Confira a quantidade.');
+  if (move.delta.abs().gt(MAX_BALANCE))
+    throw new AppError('A diferença da contagem passa do limite permitido. Confira a quantidade.');
   const balance = item.balance.plus(move.delta);
   if (balance.abs().gt(MAX_BALANCE))
     throw new AppError('O saldo passaria do limite permitido. Confira a quantidade.');
@@ -210,12 +219,23 @@ export async function createItem(
         // Creation without an entry has no movement to replay. Keep its request in the existing
         // immutable creation audit and serialize this request across concurrent submissions.
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${user.organizationId}), hashtext(${requestId}))`;
-        const created = await tx.stockItemAudit.findFirst({ where: { organizationId: user.organizationId,
-          action: 'CRIADO', metadata: { path: ['requestId'], equals: requestId } } });
+        const created = await tx.stockItemAudit.findFirst({
+          where: {
+            organizationId: user.organizationId,
+            action: 'CRIADO',
+            metadata: { path: ['requestId'], equals: requestId },
+          },
+        });
         if (created) {
-          if (created.actorId !== actorId) throw new AppError('Este formulário já foi enviado por outra pessoa. Recarregue a página.', 409);
+          if (created.actorId !== actorId)
+            throw new AppError(
+              'Este formulário já foi enviado por outra pessoa. Recarregue a página.',
+              409,
+            );
           const item = await tx.stockItem.findUniqueOrThrow({ where: { id: created.itemId } });
-          const movement = await tx.stockMovement.findUnique({ where: { organizationId_requestId: { organizationId: user.organizationId, requestId } } });
+          const movement = await tx.stockMovement.findUnique({
+            where: { organizationId_requestId: { organizationId: user.organizationId, requestId } },
+          });
           return { item, movement };
         }
         const kind = Object.values(StockItemKind).find((k) => k === input.kind);
@@ -255,10 +275,23 @@ export async function createItem(
         return { item: await tx.stockItem.findUniqueOrThrow({ where: { id: item.id } }), movement };
       }),
     async (movement) => {
-      const audit = await db.stockItemAudit.findFirst({ where: { itemId: movement.itemId, actorId,
-        action: 'CRIADO', metadata: { path: ['requestId'], equals: input.requestId } } });
-      if (!audit) throw new AppError('Este formulário já foi usado para outro lançamento. Recarregue a página.', 409);
-      return { item: await db.stockItem.findUniqueOrThrow({ where: { id: movement.itemId } }), movement };
+      const audit = await db.stockItemAudit.findFirst({
+        where: {
+          itemId: movement.itemId,
+          actorId,
+          action: 'CRIADO',
+          metadata: { path: ['requestId'], equals: input.requestId },
+        },
+      });
+      if (!audit)
+        throw new AppError(
+          'Este formulário já foi usado para outro lançamento. Recarregue a página.',
+          409,
+        );
+      return {
+        item: await db.stockItem.findUniqueOrThrow({ where: { id: movement.itemId } }),
+        movement,
+      };
     },
   ).catch(duplicateName);
 }
@@ -461,83 +494,199 @@ export async function deactivateItem(
 
 const HOUR = 60 * 60 * 1000;
 function withinTicketWindow(ticket: { status: string; resolvedAt: Date | null }) {
-  return ticket.status !== 'RESOLVIDO' ||
-    (ticket.resolvedAt !== null && ticket.resolvedAt.getTime() >= Date.now() - 48 * HOUR);
+  return (
+    ticket.status !== 'RESOLVIDO' ||
+    (ticket.resolvedAt !== null && ticket.resolvedAt.getTime() >= Date.now() - 48 * HOUR)
+  );
 }
-function participates(user: { id: string; role: string }, ticket: {
-  assigneeId: string | null; participants: { userId: string }[];
-}) {
-  return user.role === 'ADMIN' || ticket.assigneeId === user.id ||
-    ticket.participants.some((p) => p.userId === user.id);
+function participates(
+  user: { id: string; role: string },
+  ticket: {
+    assigneeId: string | null;
+    participants: { userId: string }[];
+  },
+) {
+  return (
+    user.role === 'ADMIN' ||
+    ticket.assigneeId === user.id ||
+    ticket.participants.some((p) => p.userId === user.id)
+  );
 }
-export async function recordTicketUse(actorId: string, ticketId: string, input: {
-  itemId: string; quantity: string; requestId: string;
-}): Promise<StockMovement> {
-  return withRequestId(actorId, input.requestId, (requestId) => db.$transaction(async (tx) => {
-    const user = await stockActor(tx, actorId, 'operate');
-    await tx.$queryRaw`SELECT id FROM "Ticket" WHERE id = ${ticketId} AND "organizationId" = ${user.organizationId} FOR SHARE`;
-    const ticket = await tx.ticket.findFirst({ where: { id: ticketId, organizationId: user.organizationId }, include: { participants: true } });
-    if (!ticket || !canSee(user, ticket)) throw new AppError('Chamado não encontrado.', 404);
-    if (!participates(user, ticket)) throw new AppError('Só quem participa do chamado pode registrar materiais.', 403);
-    if (!withinTicketWindow(ticket)) throw new AppError('O prazo de 48 horas depois da resolução acabou. Registre como uso fora de chamado, com foto.');
-    const item = await lockActiveMaterial(tx, input.itemId, user.organizationId);
-    const quantity = parseQuantity(input.quantity);
-    return applyMaterialMovement(tx, item, user, { type: 'USO_CHAMADO', quantity,
-      delta: quantity.negated(), ticketId, ticketTeamId: ticket.teamId, requestId });
-  }), (movement) => movement);
+export async function recordTicketUse(
+  actorId: string,
+  ticketId: string,
+  input: {
+    itemId: string;
+    quantity: string;
+    requestId: string;
+  },
+): Promise<StockMovement> {
+  return withRequestId(
+    actorId,
+    input.requestId,
+    (requestId) =>
+      db.$transaction(async (tx) => {
+        const user = await stockActor(tx, actorId, 'operate');
+        await tx.$queryRaw`SELECT id FROM "Ticket" WHERE id = ${ticketId} AND "organizationId" = ${user.organizationId} FOR SHARE`;
+        const ticket = await tx.ticket.findFirst({
+          where: { id: ticketId, organizationId: user.organizationId },
+          include: { participants: true },
+        });
+        if (!ticket || !canSee(user, ticket)) throw new AppError('Chamado não encontrado.', 404);
+        if (!participates(user, ticket))
+          throw new AppError('Só quem participa do chamado pode registrar materiais.', 403);
+        if (!withinTicketWindow(ticket))
+          throw new AppError(
+            'O prazo de 48 horas depois da resolução acabou. Registre como uso fora de chamado, com foto.',
+          );
+        const item = await lockActiveMaterial(tx, input.itemId, user.organizationId);
+        const quantity = parseQuantity(input.quantity);
+        return applyMaterialMovement(tx, item, user, {
+          type: 'USO_CHAMADO',
+          quantity,
+          delta: quantity.negated(),
+          ticketId,
+          ticketTeamId: ticket.teamId,
+          requestId,
+        });
+      }),
+    (movement) => movement,
+  );
 }
-export async function reverseMovement(actorId: string, movementId: string, input: {
-  reason: string; requestId: string;
-}): Promise<StockMovement> {
-  return withRequestId(actorId, input.requestId, (requestId) => db.$transaction(async (tx) => {
-    const user = await stockActor(tx, actorId, 'operate');
-    const original = await tx.stockMovement.findFirst({ where: { id: movementId, organizationId: user.organizationId } });
-    if (!original) throw new AppError('Lançamento não encontrado.', 404);
-    const item = await lockItem(tx, original.itemId, user.organizationId);
-    const reversed = await tx.stockMovement.findUnique({ where: { reversesId: original.id } });
-    if (reversed) {
-      if (reversed.requestId === requestId && reversed.actorId === actorId) return reversed;
-      throw new AppError('Este lançamento já foi estornado.', 409);
-    }
-    if (!['ENTRADA', 'USO_CHAMADO', 'USO_AVULSO'].includes(original.type))
-      throw new AppError('Este tipo de lançamento não pode ser estornado.');
-    if (!user.keeper && (original.actorId !== actorId || original.createdAt.getTime() < Date.now() - 24 * HOUR))
-      throw new AppError('Só quem lançou, em até 24 horas, ou um responsável de estoque pode estornar.', 403);
-    const reason = boundedText(input.reason, 3, 500, 'Informe o motivo do estorno, com 3 a 500 caracteres.');
-    return applyMaterialMovement(tx, item, user, { type: 'ESTORNO', quantity: original.quantity!,
-      delta: original.delta!.negated(), reversesId: original.id, reason, requestId });
-  }), (movement) => movement);
+export async function reverseMovement(
+  actorId: string,
+  movementId: string,
+  input: {
+    reason: string;
+    requestId: string;
+  },
+): Promise<StockMovement> {
+  return withRequestId(
+    actorId,
+    input.requestId,
+    (requestId) =>
+      db.$transaction(async (tx) => {
+        const user = await stockActor(tx, actorId, 'operate');
+        const original = await tx.stockMovement.findFirst({
+          where: { id: movementId, organizationId: user.organizationId },
+        });
+        if (!original) throw new AppError('Lançamento não encontrado.', 404);
+        const item = await lockItem(tx, original.itemId, user.organizationId);
+        const reversed = await tx.stockMovement.findUnique({ where: { reversesId: original.id } });
+        if (reversed) {
+          if (reversed.requestId === requestId && reversed.actorId === actorId) return reversed;
+          throw new AppError('Este lançamento já foi estornado.', 409);
+        }
+        if (!['ENTRADA', 'USO_CHAMADO', 'USO_AVULSO'].includes(original.type))
+          throw new AppError('Este tipo de lançamento não pode ser estornado.');
+        if (
+          !user.keeper &&
+          (original.actorId !== actorId || original.createdAt.getTime() < Date.now() - 24 * HOUR)
+        )
+          throw new AppError(
+            'Só quem lançou, em até 24 horas, ou um responsável de estoque pode estornar.',
+            403,
+          );
+        const reason = boundedText(
+          input.reason,
+          3,
+          500,
+          'Informe o motivo do estorno, com 3 a 500 caracteres.',
+        );
+        return applyMaterialMovement(tx, item, user, {
+          type: 'ESTORNO',
+          quantity: original.quantity!,
+          delta: original.delta!.negated(),
+          reversesId: original.id,
+          reason,
+          requestId,
+        });
+      }),
+    (movement) => movement,
+  );
 }
 export async function ticketMaterials(actorId: string, ticketId: string) {
   const user = await stockActor(db, actorId, 'view');
-  if (user.role !== 'TI' && user.role !== 'ADMIN') throw new AppError('Chamado não encontrado.', 404);
-  const ticket = await db.ticket.findFirst({ where: { id: ticketId, organizationId: user.organizationId }, include: { participants: true } });
+  if (user.role !== 'TI' && user.role !== 'ADMIN')
+    throw new AppError('Chamado não encontrado.', 404);
+  const ticket = await db.ticket.findFirst({
+    where: { id: ticketId, organizationId: user.organizationId },
+    include: { participants: true },
+  });
   if (!ticket || !canSee(user, ticket)) throw new AppError('Chamado não encontrado.', 404);
-  const movements = await db.stockMovement.findMany({ where: { ticketId, organizationId: user.organizationId, type: 'USO_CHAMADO' },
-    include: { item: true, actor: { select: { name: true } }, reversedBy: { select: { id: true } } }, orderBy: { sequence: 'asc' } });
-  const materials = await db.stockItem.findMany({ where: { organizationId: user.organizationId, kind: 'MATERIAL', active: true },
-    include: { team: { select: { name: true } } }, orderBy: { name: 'asc' } });
-  return { movements: movements.map(({ reversedBy, ...m }) => ({ ...m, reversed: !!reversedBy })),
+  const movements = await db.stockMovement.findMany({
+    where: { ticketId, organizationId: user.organizationId, type: 'USO_CHAMADO' },
+    include: {
+      item: true,
+      actor: { select: { name: true } },
+      reversedBy: { select: { id: true } },
+    },
+    orderBy: { sequence: 'asc' },
+  });
+  const materials = await db.stockItem.findMany({
+    where: { organizationId: user.organizationId, kind: 'MATERIAL', active: true },
+    include: { team: { select: { name: true } } },
+    orderBy: { name: 'asc' },
+  });
+  return {
+    movements: movements.map(({ reversedBy, ...m }) => ({ ...m, reversed: !!reversedBy })),
     canRecord: participates(user, ticket) && withinTicketWindow(ticket),
-    materials: materials.map((m) => ({ id: m.id, name: m.name, unit: m.unit, teamName: m.team.name })) };
+    materials: materials.map((m) => ({
+      id: m.id,
+      name: m.name,
+      unit: m.unit,
+      teamName: m.team.name,
+    })),
+  };
 }
 
-export async function recordOffTicketUse(actorId: string, input: {
-  itemId: string; quantity: string; note?: string; requestId: string;
-}, photo: import('./stock-photo').ProcessedPhoto): Promise<StockMovement> {
-  return withRequestId(actorId, input.requestId, (requestId) => db.$transaction(async (tx) => {
-    const user = await stockActor(tx, actorId, 'operate');
-    const item = await lockActiveMaterial(tx, input.itemId, user.organizationId);
-    const quantity = parseQuantity(input.quantity);
-    const note = boundedText(input.note, 0, 500, 'A observação pode ter até 500 caracteres.');
-    const movement = await applyMaterialMovement(tx, item, user, { type: 'USO_AVULSO', quantity, delta: quantity.negated(), note, requestId });
-    await tx.stockPhoto.create({ data: { movementId: movement.id, organizationId: user.organizationId, ...photo, data: new Uint8Array(photo.data) } });
-    return movement;
-  }), (movement) => movement);
+export async function recordOffTicketUse(
+  actorId: string,
+  input: {
+    itemId: string;
+    quantity: string;
+    note?: string;
+    requestId: string;
+  },
+  photo: import('./stock-photo').ProcessedPhoto,
+): Promise<StockMovement> {
+  return withRequestId(
+    actorId,
+    input.requestId,
+    (requestId) =>
+      db.$transaction(async (tx) => {
+        const user = await stockActor(tx, actorId, 'operate');
+        const item = await lockActiveMaterial(tx, input.itemId, user.organizationId);
+        const quantity = parseQuantity(input.quantity);
+        const note = boundedText(input.note, 0, 500, 'A observação pode ter até 500 caracteres.');
+        const movement = await applyMaterialMovement(tx, item, user, {
+          type: 'USO_AVULSO',
+          quantity,
+          delta: quantity.negated(),
+          note,
+          requestId,
+        });
+        await tx.stockPhoto.create({
+          data: {
+            movementId: movement.id,
+            organizationId: user.organizationId,
+            ...photo,
+            data: new Uint8Array(photo.data),
+          },
+        });
+        return movement;
+      }),
+    (movement) => movement,
+  );
 }
-export async function authorizationPhoto(actorId: string, movementId: string): Promise<{ data: Uint8Array; mime: 'image/webp' }> {
+export async function authorizationPhoto(
+  actorId: string,
+  movementId: string,
+): Promise<{ data: Uint8Array; mime: 'image/webp' }> {
   const user = await stockActor(db, actorId, 'view');
-  const movement = await db.stockMovement.findFirst({ where: { id: movementId, organizationId: user.organizationId, type: 'USO_AVULSO' } });
+  const movement = await db.stockMovement.findFirst({
+    where: { id: movementId, organizationId: user.organizationId, type: 'USO_AVULSO' },
+  });
   if (!movement || (!['ADMIN', 'GESTOR'].includes(user.role) && movement.actorId !== user.id))
     throw new AppError('Foto não encontrada.', 404);
   const photo = await db.stockPhoto.findUnique({ where: { movementId } });
@@ -548,27 +697,69 @@ export async function authorizationPhoto(actorId: string, movementId: string): P
 export async function markReplenishmentRequested(actorId: string, alertId: string) {
   return db.$transaction(async (tx) => {
     const user = await stockActor(tx, actorId, 'view');
-    const alert = await tx.stockAlert.findFirst({ where: { id: alertId, organizationId: user.organizationId } });
+    const alert = await tx.stockAlert.findFirst({
+      where: { id: alertId, organizationId: user.organizationId },
+    });
     if (!alert) throw new AppError('Alerta não encontrado.', 404);
-    const result = await tx.stockAlert.updateMany({ where: { id: alertId, organizationId: user.organizationId, closedAt: null, requestedById: null }, data: { requestedById: user.id, requestedAt: new Date() } });
-    if (result.count !== 1) throw new AppError('Alguém já marcou este pedido. Atualize a página.', 409);
+    const result = await tx.stockAlert.updateMany({
+      where: {
+        id: alertId,
+        organizationId: user.organizationId,
+        closedAt: null,
+        requestedById: null,
+      },
+      data: { requestedById: user.id, requestedAt: new Date() },
+    });
+    if (result.count !== 1)
+      throw new AppError('Alguém já marcou este pedido. Atualize a página.', 409);
   });
 }
 
-export async function stockOverview(actorId: string, input: { aba?: 'ferramentas' | 'materiais' | 'acabando'; team?: string; q?: string; page?: number }) {
+export async function stockOverview(
+  actorId: string,
+  input: {
+    aba?: 'ferramentas' | 'materiais' | 'acabando';
+    team?: string;
+    q?: string;
+    page?: number;
+  },
+) {
   const user = await stockActor(db, actorId, 'view');
   const page = Math.max(1, Math.min(100000, Math.trunc(input.page || 1)));
   const base = { organizationId: user.organizationId, active: true };
-  const where: Prisma.StockItemWhereInput = { ...base,
+  const where: Prisma.StockItemWhereInput = {
+    ...base,
     ...(input.team && { teamId: z.string().max(100).parse(input.team) }),
     ...(input.q && { name: { contains: z.string().max(100).parse(input.q), mode: 'insensitive' } }),
-    ...(input.aba === 'acabando' ? { alerts: { some: { closedAt: null } } } : { kind: input.aba === 'materiais' ? 'MATERIAL' : 'FERRAMENTA' }) };
+    ...(input.aba === 'acabando'
+      ? { alerts: { some: { closedAt: null } } }
+      : { kind: input.aba === 'materiais' ? 'MATERIAL' : 'FERRAMENTA' }),
+  };
   const [items, total, ferramentas, materiais, acabando] = await Promise.all([
-    db.stockItem.findMany({ where, include: { team: true, holder: { select: { id: true, name: true } }, alerts: { where: { closedAt: null }, include: { requestedBy: { select: { name: true } } } } }, orderBy: { name: 'asc' }, take: 20, skip: (page - 1) * 20 }),
-    db.stockItem.count({ where }), db.stockItem.count({ where: { ...base, kind: 'FERRAMENTA' } }),
-    db.stockItem.count({ where: { ...base, kind: 'MATERIAL' } }), db.stockAlert.count({ where: { organizationId: user.organizationId, closedAt: null } }),
+    db.stockItem.findMany({
+      where,
+      include: {
+        team: true,
+        holder: { select: { id: true, name: true } },
+        alerts: { where: { closedAt: null }, include: { requestedBy: { select: { name: true } } } },
+      },
+      orderBy: { name: 'asc' },
+      take: 20,
+      skip: (page - 1) * 20,
+    }),
+    db.stockItem.count({ where }),
+    db.stockItem.count({ where: { ...base, kind: 'FERRAMENTA' } }),
+    db.stockItem.count({ where: { ...base, kind: 'MATERIAL' } }),
+    db.stockAlert.count({ where: { organizationId: user.organizationId, closedAt: null } }),
   ]);
-  return { items, total, page, counts: { ferramentas, materiais, acabando }, keeper: user.keeper, canOperate: ['TI','ADMIN'].includes(user.role) };
+  return {
+    items,
+    total,
+    page,
+    counts: { ferramentas, materiais, acabando },
+    keeper: user.keeper,
+    canOperate: ['TI', 'ADMIN'].includes(user.role),
+  };
 }
 export async function lowStockCount(actorId: string): Promise<number> {
   const user = await stockActor(db, actorId, 'view');
@@ -576,14 +767,43 @@ export async function lowStockCount(actorId: string): Promise<number> {
 }
 export async function stockItemDetail(actorId: string, itemId: string, page = 1) {
   const user = await stockActor(db, actorId, 'view');
-  const item = await db.stockItem.findFirst({ where: { id: itemId, organizationId: user.organizationId }, include: { team: true, holder: { select: { name: true } } } });
+  const item = await db.stockItem.findFirst({
+    where: { id: itemId, organizationId: user.organizationId },
+    include: { team: true, holder: { select: { name: true } } },
+  });
   if (!item) throw new AppError('Item não encontrado.', 404);
   page = Math.max(1, Math.min(100000, Math.trunc(page) || 1));
   const [movements, total, alert] = await Promise.all([
-    db.stockMovement.findMany({ where: { itemId }, include: { actor: { select: { name: true } }, targetUser: { select: { name: true } }, reversedBy: { select: { id: true } } }, orderBy: { sequence: 'desc' }, take: 30, skip: (page - 1) * 30 }),
-    db.stockMovement.count({ where: { itemId } }), db.stockAlert.findFirst({ where: { itemId, closedAt: null } }),
+    db.stockMovement.findMany({
+      where: { itemId },
+      include: {
+        actor: { select: { name: true } },
+        targetUser: { select: { name: true } },
+        reversedBy: { select: { id: true } },
+      },
+      orderBy: { sequence: 'desc' },
+      take: 30,
+      skip: (page - 1) * 30,
+    }),
+    db.stockMovement.count({ where: { itemId } }),
+    db.stockAlert.findFirst({ where: { itemId, closedAt: null } }),
   ]);
-  return { item, alert, total, page, keeper: user.keeper, movements: movements.map(({ reversedBy, ...m }) => ({ ...m, reversed: !!reversedBy,
-    canReverse: !reversedBy && ['ENTRADA','USO_CHAMADO','USO_AVULSO'].includes(m.type) &&
-      (user.keeper || (user.role === 'TI' && m.actorId === user.id && m.createdAt.getTime() >= Date.now() - 24 * HOUR)) })) };
+  return {
+    item,
+    alert,
+    total,
+    page,
+    keeper: user.keeper,
+    movements: movements.map(({ reversedBy, ...m }) => ({
+      ...m,
+      reversed: !!reversedBy,
+      canReverse:
+        !reversedBy &&
+        ['ENTRADA', 'USO_CHAMADO', 'USO_AVULSO'].includes(m.type) &&
+        (user.keeper ||
+          (user.role === 'TI' &&
+            m.actorId === user.id &&
+            m.createdAt.getTime() >= Date.now() - 24 * HOUR)),
+    })),
+  };
 }
