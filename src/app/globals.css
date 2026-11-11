@@ -2682,3 +2682,11 @@ legend,
     font-size: 11px;
   }
 }
+
+.stock-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: 16px; margin: 20px 0; }
+.stock-grid article, .stock-grid section { min-width: 0; overflow-wrap: anywhere; }
+.stock-grid .form-stack { margin-top: 12px; }
+.stock-links { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.stock-balance { font-size: 1.5rem; font-weight: 700; }
+.stock-authorization-photo { width: 100%; max-width: 480px; max-height: 500px; object-fit: contain; }
+.nav-badge { display: inline-flex; align-items: center; justify-content: center; min-width: 18px; padding: 1px 4px; margin-left: 3px; border-radius: 12px; background: var(--green); color: white; font-size: 10px; }

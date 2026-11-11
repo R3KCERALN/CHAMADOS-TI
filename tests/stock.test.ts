@@ -880,3 +880,18 @@ test('autor estorna até 24 h; depois só o responsável', async () => {
     3,
   );
 });
+
+test('leituras de estoque respeitam papel e organização', async () => {
+  const stock = await import('../src/lib/stock-service');
+  const target = await material('2', '1');
+  await assert.rejects(stock.stockOverview(employee, {}), { status: 404 });
+  await assert.rejects(stock.lowStockCount(employee), { status: 404 });
+  assert.ok((await stock.stockOverview(manager, { aba: 'materiais', q: target.name })).items.some((i) => i.id === target.id));
+  assert.ok(await stock.lowStockCount(manager));
+  const org = await db.organization.create({ data: { name: 'Leitura alheia' } });
+  const foreign = await db.stockItem.create({ data: { organizationId: org.id, teamId: await teamId(org.id, 'TI'), kind: 'FERRAMENTA', name: target.name } });
+  assert.ok(!(await stock.stockOverview(tech, { aba: 'materiais', q: target.name })).items.some((i) => i.id === foreign.id));
+  await assert.rejects(stock.stockItemDetail(admin, foreign.id), { status: 404 });
+  const detail = await stock.stockItemDetail(keeper, target.id);
+  assert.equal(detail.item.id, target.id); assert.equal(detail.keeper, true);
+});

@@ -21,9 +21,11 @@ export function Brand() {
 export function Shell({
   user,
   children,
+  lowStock = 0,
 }: {
   user: { id: string; name: string; role: Role };
   children: React.ReactNode;
+  lowStock?: number;
 }) {
   return (
     <div className="app-shell">
@@ -31,7 +33,7 @@ export function Shell({
         <Link href="/" className="brand-link" aria-label="Central de Suporte, início">
           <Brand />
         </Link>
-        <AppNavigation role={user.role} />
+        <AppNavigation role={user.role} lowStock={lowStock} />
       </aside>
       <div className="workspace">
         <header className="topbar">
@@ -60,13 +62,9 @@ export function Shell({
             </form>
           </div>
         </header>
-        <MobileNavigation role={user.role} />
+        <MobileNavigation role={user.role} lowStock={lowStock} />
         <main id="main" className="main-content">
-          {user.role !== 'GESTOR' && (
-            <>
-              <PushControl userId={user.id} />
-            </>
-          )}
+          <PushControl userId={user.id} />
           {children}
         </main>
       </div>

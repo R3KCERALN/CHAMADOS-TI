@@ -533,3 +533,36 @@ export async function markReplenishmentRequested(actorId: string, alertId: strin
     if (result.count !== 1) throw new AppError('Alguém já marcou este pedido. Atualize a página.', 409);
   });
 }
+
+export async function stockOverview(actorId: string, input: { aba?: 'ferramentas' | 'materiais' | 'acabando'; team?: string; q?: string; page?: number }) {
+  const user = await stockActor(db, actorId, 'view');
+  const page = Math.max(1, Math.min(100000, Math.trunc(input.page || 1)));
+  const base = { organizationId: user.organizationId, active: true };
+  const where: Prisma.StockItemWhereInput = { ...base,
+    ...(input.team && { teamId: z.string().max(100).parse(input.team) }),
+    ...(input.q && { name: { contains: z.string().max(100).parse(input.q), mode: 'insensitive' } }),
+    ...(input.aba === 'acabando' ? { alerts: { some: { closedAt: null } } } : { kind: input.aba === 'materiais' ? 'MATERIAL' : 'FERRAMENTA' }) };
+  const [items, total, ferramentas, materiais, acabando] = await Promise.all([
+    db.stockItem.findMany({ where, include: { team: true, holder: { select: { id: true, name: true } }, alerts: { where: { closedAt: null }, include: { requestedBy: { select: { name: true } } } } }, orderBy: { name: 'asc' }, take: 20, skip: (page - 1) * 20 }),
+    db.stockItem.count({ where }), db.stockItem.count({ where: { ...base, kind: 'FERRAMENTA' } }),
+    db.stockItem.count({ where: { ...base, kind: 'MATERIAL' } }), db.stockAlert.count({ where: { organizationId: user.organizationId, closedAt: null } }),
+  ]);
+  return { items, total, page, counts: { ferramentas, materiais, acabando }, keeper: user.keeper, canOperate: ['TI','ADMIN'].includes(user.role) };
+}
+export async function lowStockCount(actorId: string): Promise<number> {
+  const user = await stockActor(db, actorId, 'view');
+  return db.stockAlert.count({ where: { organizationId: user.organizationId, closedAt: null } });
+}
+export async function stockItemDetail(actorId: string, itemId: string, page = 1) {
+  const user = await stockActor(db, actorId, 'view');
+  const item = await db.stockItem.findFirst({ where: { id: itemId, organizationId: user.organizationId }, include: { team: true, holder: { select: { name: true } } } });
+  if (!item) throw new AppError('Item não encontrado.', 404);
+  page = Math.max(1, Math.min(100000, Math.trunc(page) || 1));
+  const [movements, total, alert] = await Promise.all([
+    db.stockMovement.findMany({ where: { itemId }, include: { actor: { select: { name: true } }, targetUser: { select: { name: true } }, reversedBy: { select: { id: true } } }, orderBy: { sequence: 'desc' }, take: 30, skip: (page - 1) * 30 }),
+    db.stockMovement.count({ where: { itemId } }), db.stockAlert.findFirst({ where: { itemId, closedAt: null } }),
+  ]);
+  return { item, alert, total, page, keeper: user.keeper, movements: movements.map(({ reversedBy, ...m }) => ({ ...m, reversed: !!reversedBy,
+    canReverse: !reversedBy && ['ENTRADA','USO_CHAMADO','USO_AVULSO'].includes(m.type) &&
+      (user.keeper || (user.role === 'TI' && m.actorId === user.id && m.createdAt.getTime() >= Date.now() - 24 * HOUR)) })) };
+}

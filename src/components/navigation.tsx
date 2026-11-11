@@ -9,6 +9,7 @@ import {
   ListTodo,
   Plus,
   Settings2,
+  Boxes,
 } from 'lucide-react';
 import type { Role } from '@/generated/prisma/client';
 import { organizationLabels as labels } from '@/lib/organization-labels';
@@ -28,7 +29,7 @@ function current(pathname: string, item: Item) {
   return pathname.startsWith(item.activePrefix || item.href);
 }
 
-export function AppNavigation({ role }: { role: Role }) {
+export function AppNavigation({ role, lowStock = 0 }: { role: Role; lowStock?: number }) {
   const pathname = usePathname();
   const tech = role === 'TI' || role === 'ADMIN';
   const items = navigationItems(role);
@@ -46,7 +47,7 @@ export function AppNavigation({ role }: { role: Role }) {
               aria-current={active ? 'page' : undefined}
             >
               <Icon size={19} aria-hidden="true" />
-              {item.label}
+              {item.label}{item.href === "/estoque" && lowStock > 0 && <span className="nav-badge" aria-label={`${lowStock} materiais acabando`}>{lowStock}</span>}
             </Link>
           );
         })}
@@ -79,6 +80,7 @@ function navigationItems(role: Role): Item[] {
           },
         ]
       : []),
+    ...(['TI','ADMIN','GESTOR'].includes(role) ? [{ href: '/estoque', label: 'Estoque', icon: Boxes }] : []),
     ...(role === 'ADMIN'
       ? [
           {
@@ -96,7 +98,7 @@ function navigationItems(role: Role): Item[] {
   ];
 }
 
-export function MobileNavigation({ role }: { role: Role }) {
+export function MobileNavigation({ role, lowStock = 0 }: { role: Role; lowStock?: number }) {
   const pathname = usePathname();
   const tech = role === 'TI' || role === 'ADMIN';
   const mobileItems: Item[] = [
@@ -109,7 +111,7 @@ export function MobileNavigation({ role }: { role: Role }) {
   }
   return (
     <nav className="mobile-nav" aria-label="Navegação principal">
-      {mobileItems.slice(0, 5).map((item) => {
+      {mobileItems.slice(0, 6).map((item) => {
         const active = current(pathname, item);
         return (
           <Link
@@ -118,7 +120,7 @@ export function MobileNavigation({ role }: { role: Role }) {
             className={`${item.quick ? 'quick' : ''}${active ? ' active' : ''}`}
             aria-current={active ? 'page' : undefined}
           >
-            {item.mobileLabel || item.label}
+            {item.mobileLabel || item.label}{item.href === "/estoque" && lowStock > 0 && <span className="nav-badge" aria-label={`${lowStock} materiais acabando`}>{lowStock}</span>}
           </Link>
         );
       })}
