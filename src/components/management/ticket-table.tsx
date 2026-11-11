@@ -19,6 +19,7 @@ export function ManagementTicketTable({
         <thead>
           <tr>
             <th>Chamado</th>
+            <th>Equipe</th>
             <th>Solicitante / setor</th>
             <th>
               {labels.company} / {labels.unit}
@@ -42,6 +43,7 @@ export function ManagementTicketTable({
                   ticketNumber(t.number)
                 )}
               </td>
+              <td>{t.team}</td>
               <td>
                 <strong>{t.requester}</strong>
                 <small>{t.department}</small>

@@ -16,9 +16,11 @@ import {
   changeStatus,
   getTicket,
   listTickets,
+  moveTicketTeam,
+  setSupport,
 } from '../src/lib/services';
 import { overview, teamReport, technicianDetail, exportRows } from '../src/lib/analytics-service';
-import { csvCell, csvRow } from '../src/lib/csv';
+import { csvCell, csvRow, csvHeader } from '../src/lib/csv';
 import { localMidnight, resolvePeriod } from '../src/lib/period';
 import type { Role, EventType, TicketStatus, WaitingReason } from '../src/generated/prisma/client';
 const now = new Date('2026-09-18T15:00:00Z');
@@ -508,4 +510,101 @@ test('categoria pertence a uma equipe e só classifica chamados dessa equipe', a
     (await db.ticket.findUniqueOrThrow({ where: { id: ticket.id } })).categoryId,
     sameName.id,
   );
+});
+
+async function teamScenario() {
+  const eletrica = await teamId(organizationId, 'ELETRICA');
+  const department = (
+    await db.department.create({ data: { organizationId, name: `Equipes ${id()}` } })
+  ).id;
+  const hash = await hashPassword('123456');
+  const newUser = async (role: Role, team?: string, deptId = departmentId) =>
+    (
+      await db.user.create({
+        data: {
+          name: `Pessoa ${role} ${id()}`,
+          username: `test.${id()}`,
+          role,
+          organizationId,
+          primaryCompanyId,
+          departmentId: deptId,
+          passwordHash: hash,
+          mustChangePassword: false,
+          teamId: team,
+        },
+      })
+    ).id;
+  const requester = await newUser('FUNCIONARIO', undefined, department);
+  const [electrician, electrician2] = [
+    await newUser('TI', eletrica),
+    await newUser('TI', eletrica),
+  ];
+  const open = (teamId: string, text: string) =>
+    createTicket(requester, { description: `${text} ${id()}`, impact: 'BAIXO', teamId });
+  return { eletrica, department, requester, electrician, electrician2, open };
+}
+test('filtro de equipe recorta panorama, chamados e CSV pela equipe atual', async () => {
+  const { eletrica, department, open } = await teamScenario();
+  const [t1, t2] = [await open(tiTeam, 'Rede'), await open(tiTeam, 'Impressora')];
+  await open(eletrica, 'Tomada');
+  await claimTicket(tech, t1.id);
+  await moveTicketTeam(tech, t1.id, eletrica);
+  const input = { periodo: 'hoje', department };
+  const instant = new Date();
+  assert.equal((await overview(manager, { ...input, team: eletrica }, instant)).summary.opened, 2);
+  assert.equal((await overview(manager, { ...input, team: tiTeam }, instant)).summary.opened, 1);
+  assert.equal((await overview(manager, input, instant)).summary.opened, 3);
+  const rows = await exportRows(manager, { ...input, team: eletrica }, instant);
+  assert.equal(rows.length, 2);
+  assert.ok(rows.every((r) => r.team === 'Elétrica'));
+  assert.ok(!rows.some((r) => r.number === t2.number));
+  assert.equal((await exportRows(manager, input, instant)).length, 3);
+  assert.equal(
+    (await exportRows(manager, { ...input, team: tiTeam }, instant)).map((r) => r.team)[0],
+    'TI',
+  );
+});
+test('tela Equipe com filtro lista os técnicos da equipe e os apoios vindos de fora', async () => {
+  const { eletrica, department, electrician, electrician2, open } = await teamScenario();
+  const ticket = await open(eletrica, 'Quadro de energia');
+  await claimTicket(electrician, ticket.id);
+  await setSupport(electrician, ticket.id, tech, true);
+  const instant = new Date();
+  const report = await teamReport(
+    manager,
+    { periodo: 'hoje', department, team: eletrica },
+    instant,
+  );
+  const ids = report.rows.map((r) => r.id);
+  assert.ok(ids.includes(electrician));
+  assert.ok(ids.includes(electrician2));
+  assert.ok(ids.includes(tech));
+  assert.ok(!ids.includes(tech2));
+  assert.ok(!ids.includes(admin));
+  assert.equal(report.rows.find((r) => r.id === tech)!.support, 1);
+});
+test('chamado movido e resolvido mantém tempos confiáveis e a primeira resposta da equipe original', async () => {
+  const { eletrica, department, electrician, open } = await teamScenario();
+  const ticket = await open(tiTeam, 'Ponto de luz');
+  await claimTicket(tech, ticket.id);
+  await moveTicketTeam(tech, ticket.id, eletrica);
+  await claimTicket(electrician, ticket.id);
+  await changeStatus(electrician, ticket.id, { status: 'AGUARDANDO', waitingReason: 'USUARIO' });
+  await changeStatus(electrician, ticket.id, { status: 'EM_ATENDIMENTO' });
+  await changeStatus(electrician, ticket.id, { status: 'RESOLVIDO' });
+  const instant = new Date();
+  const input = { periodo: 'hoje', department, team: eletrica };
+  const [row] = await exportRows(manager, input, instant);
+  assert.equal(row.team, 'Elétrica');
+  assert.notEqual(row.waiting_seconds, null);
+  assert.notEqual(row.active_seconds, null);
+  const first = await db.ticketEvent.findFirstOrThrow({
+    where: { ticketId: ticket.id, type: 'ASSUMIDO' },
+    orderBy: { sequence: 'asc' },
+  });
+  assert.equal(row.first_response?.getTime(), first.createdAt.getTime());
+  assert.equal((await overview(manager, input, instant)).summary.incomplete, 0);
+});
+test('CSV tem coluna Equipe logo depois do número', () => {
+  assert.ok(csvHeader.startsWith('"Número";"Equipe"'));
 });

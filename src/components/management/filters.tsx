@@ -70,6 +70,17 @@ export function ManagementFilters({
           </>
         )}
         <div className="field">
+          <label htmlFor="team">Equipe</label>
+          <select id="team" name="team" defaultValue={values.team || ''}>
+            <option value="">Todas as equipes</option>
+            {options.teams.map((t) => (
+              <option value={t.id} key={t.id}>
+                {t.name}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="field">
           <label htmlFor="department">Setor solicitante</label>
           <select id="department" name="department" defaultValue={values.department || ''}>
             <option value="">Todos os setores</option>

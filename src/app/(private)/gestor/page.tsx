@@ -45,6 +45,7 @@ export default async function ManagementPage({
     );
   if (values.unit)
     addFilter(labels.unit, values.unit === 'none' ? labels.noUnit : optionName(units, values.unit));
+  if (values.team) addFilter('Equipe', optionName(options.teams, values.team));
   if (values.department) addFilter('Setor', optionName(options.departments, values.department));
   if (values.technician) addFilter('Técnico', optionName(options.technicians, values.technician));
   if (values.category)

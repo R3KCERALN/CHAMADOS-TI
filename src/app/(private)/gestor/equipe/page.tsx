@@ -36,8 +36,8 @@ export default async function TeamPage({ searchParams }: { searchParams: Promise
       </div>
       <ManagementFilters options={options} values={values} />
       <p className="report-caption">
-        {describeFilters(data.filters)} · Ordem alfabética. Técnicos ativos e pessoas com atuação
-        histórica ou pendências.
+        {describeFilters(data.filters, options.teams.find((t) => t.id === data.filters.team)?.name)}{' '}
+        · Ordem alfabética. Técnicos ativos e pessoas com atuação histórica ou pendências.
       </p>
       <section className="panel list-panel">
         <div className="table-scroll">

@@ -49,7 +49,8 @@ export default async function TechnicianPage({
       </div>
       <ManagementFilters options={options} values={values} lockedTechnician={id} />
       <p className="report-caption">
-        {describeFilters(data.filters)} · Participações no período e carteira atual/final.
+        {describeFilters(data.filters, options.teams.find((t) => t.id === data.filters.team)?.name)}{' '}
+        · Participações no período e carteira atual/final.
       </p>
       <div className="metric-grid">
         <MetricCard

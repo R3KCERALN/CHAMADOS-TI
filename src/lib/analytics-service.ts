@@ -15,6 +15,7 @@ export type Distribution = {
 export type MetricTicket = {
   id: string;
   number: number;
+  team: string;
   company: string | null;
   unit: string | null;
   requester: string;
@@ -59,7 +60,7 @@ export async function managementAccess(actorId: string) {
 }
 export async function analyticsOptions(actorId: string) {
   const viewer = await managementAccess(actorId);
-  const [departments, categories, technicians, companies] = await Promise.all([
+  const [departments, categories, technicians, companies, teams] = await Promise.all([
     db.department.findMany({
       where: { organizationId: viewer.organizationId },
       orderBy: { name: 'asc' },
@@ -96,8 +97,13 @@ export async function analyticsOptions(actorId: string) {
         units: { orderBy: { name: 'asc' }, select: { id: true, name: true, active: true } },
       },
     }),
+    db.team.findMany({
+      where: { organizationId: viewer.organizationId },
+      orderBy: { name: 'asc' },
+      select: { id: true, name: true },
+    }),
   ]);
-  return { departments, categories, technicians, companies };
+  return { departments, categories, technicians, companies, teams };
 }
 export async function overview(actorId: string, input: SearchParams, now = new Date()) {
   const viewer = await managementAccess(actorId);
@@ -142,7 +148,7 @@ export async function overview(actorId: string, input: SearchParams, now = new D
       ) x),'[]'::jsonb),
       'backlog',coalesce((SELECT jsonb_agg(x ORDER BY x.band) FROM (SELECT age_band AS band,
         (ARRAY['Menos de 1 dia','1–3 dias','4–7 dias','8–15 dias','Mais de 15 dias'])[age_band+1] AS name,count(*) AS count FROM aged GROUP BY age_band) x),'[]'::jsonb),
-      'oldest',coalesce((SELECT jsonb_agg(x ORDER BY x."createdAt") FROM (SELECT id,number,requester,company,unit,department,category,complexity,status,to_char("createdAt",'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "createdAt",to_char("resolvedAt",'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "resolvedAt",assignee,age FROM aged ORDER BY "createdAt",id LIMIT 10) x),'[]'::jsonb)
+      'oldest',coalesce((SELECT jsonb_agg(x ORDER BY x."createdAt") FROM (SELECT id,number,team,requester,company,unit,department,category,complexity,status,to_char("createdAt",'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "createdAt",to_char("resolvedAt",'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "resolvedAt",assignee,age FROM aged ORDER BY "createdAt",id LIMIT 10) x),'[]'::jsonb)
     ) AS data`);
   return { ...result[0].data, filters };
 }
@@ -171,7 +177,7 @@ export async function teamReport(actorId: string, input: SearchParams, now = new
   >(Prisma.sql`${metricsCTE(filters, viewer.organizationId, true)},
     eligible AS (
       SELECT u.id,u.name,u.active,u.role FROM "User" u WHERE u."organizationId"=${viewer.organizationId} AND
-      ((u.role='TI' AND u.active) OR EXISTS(SELECT 1 FROM principal_period r WHERE r.user_id=u.id)
+      ((u.role='TI' AND u.active ${filters.team ? Prisma.sql`AND u."teamId"=${filters.team}` : Prisma.empty}) OR EXISTS(SELECT 1 FROM principal_period r WHERE r.user_id=u.id)
         OR EXISTS(SELECT 1 FROM support_period s WHERE s.user_id=u.id)
         OR EXISTS(SELECT 1 FROM m WHERE m."assigneeId"=u.id AND (m.resolved_period OR m.status<>'RESOLVIDO')))
       ${filters.technician ? Prisma.sql`AND u.id=${filters.technician}` : Prisma.empty}
@@ -223,7 +229,7 @@ export async function technicianDetail(
     involved AS (SELECT m.*,EXISTS(SELECT 1 FROM principal_period r WHERE r."ticketId"=m.id AND r.user_id=${userId}) AS principal,
       EXISTS(SELECT 1 FROM support_period s WHERE s."ticketId"=m.id AND s.user_id=${userId}) AS support FROM m),
     selected AS (SELECT * FROM involved WHERE principal OR support),
-    recent AS (SELECT id,number,requester,company,unit,department,category,complexity,status,to_char("createdAt",'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "createdAt",to_char("resolvedAt",'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "resolvedAt",assignee,principal,support FROM selected ORDER BY "createdAt" DESC,id LIMIT 20 OFFSET ${(page - 1) * 20})
+    recent AS (SELECT id,number,team,requester,company,unit,department,category,complexity,status,to_char("createdAt",'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "createdAt",to_char("resolvedAt",'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "resolvedAt",assignee,principal,support FROM selected ORDER BY "createdAt" DESC,id LIMIT 20 OFFSET ${(page - 1) * 20})
     SELECT jsonb_build_object('total',(SELECT count(*) FROM selected),'tickets',coalesce((SELECT jsonb_agg(recent ORDER BY "createdAt" DESC,id) FROM recent),'[]'::jsonb),
       'categories',coalesce((SELECT jsonb_agg(x ORDER BY x.count DESC,x.name) FROM (SELECT coalesce(category,'Sem categoria') AS name,count(*) AS count FROM selected GROUP BY category) x),'[]'::jsonb),
       'departments',coalesce((SELECT jsonb_agg(x ORDER BY x.count DESC,x.name) FROM (SELECT department AS name,count(*) AS count FROM selected GROUP BY department) x),'[]'::jsonb),
@@ -233,6 +239,7 @@ export async function technicianDetail(
   return { ...result[0].data, user, summary: team.rows[0], filters, page };
 }
 export type ExportRow = {
+  team: string;
   cnpj: string | null;
   openedBy: string | null;
   registeredRequester: string | null;
@@ -266,7 +273,7 @@ export async function exportRows(
   const viewer = await actor(tx, actorId, ['ADMIN', 'GESTOR']);
   const f = analyticsFilters(input, now);
   return tx.$queryRaw<ExportRow[]>(
-    Prisma.sql`${metricsCTE(f, viewer.organizationId, false, { after: afterNumber, limit: Math.min(500, Math.max(1, limit)) })} SELECT number,requester,company,cnpj,unit,"openedBy","registeredRequester",CASE WHEN "requesterId" IS NULL THEN "requesterName" END AS "manualRequester",department,assignee,category,complexity,impact,status,origin,"createdAt",first_response,"resolvedAt",total_seconds,waiting_seconds,active_seconds FROM m ORDER BY number`,
+    Prisma.sql`${metricsCTE(f, viewer.organizationId, false, { after: afterNumber, limit: Math.min(500, Math.max(1, limit)) })} SELECT number,team,requester,company,cnpj,unit,"openedBy","registeredRequester",CASE WHEN "requesterId" IS NULL THEN "requesterName" END AS "manualRequester",department,assignee,category,complexity,impact,status,origin,"createdAt",first_response,"resolvedAt",total_seconds,waiting_seconds,active_seconds FROM m ORDER BY number`,
   );
 }
 export function formatDuration(seconds: number | null | undefined) {
@@ -277,8 +284,9 @@ export function formatDuration(seconds: number | null | undefined) {
     return `${(seconds / 3600).toLocaleString('pt-BR', { maximumFractionDigits: 1 })} h`;
   return `${(seconds / 86400).toLocaleString('pt-BR', { maximumFractionDigits: 1 })} dias`;
 }
-export function describeFilters(f: AnalyticsFilters) {
-  return `${f.from.split('-').reverse().join('/')} a ${f.to.split('-').reverse().join('/')} · ${f.zone}`;
+export function describeFilters(f: AnalyticsFilters, teamName?: string) {
+  const period = `${f.from.split('-').reverse().join('/')} a ${f.to.split('-').reverse().join('/')} · ${f.zone}`;
+  return teamName ? `${period} · Equipe: ${teamName}` : period;
 }
 
 export type CompanyMetrics = {
@@ -321,7 +329,7 @@ export async function managementTickets(actorId: string, input: SearchParams, no
     { data: { total: number; tickets: MetricTicket[] } }[]
   >(Prisma.sql`${metricsCTE(filters, viewer.organizationId)},
     selected AS (SELECT * FROM m WHERE ${input.carteira === 'pendentes' ? Prisma.sql`status<>'RESOLVIDO'` : Prisma.sql`opened_period OR resolved_period`}),
-    recent AS (SELECT id,number,requester,company,unit,department,category,complexity,status,to_char("createdAt",'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "createdAt",to_char("resolvedAt",'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "resolvedAt",assignee FROM selected ORDER BY "createdAt" DESC,id LIMIT 20 OFFSET ${(page - 1) * 20})
+    recent AS (SELECT id,number,team,requester,company,unit,department,category,complexity,status,to_char("createdAt",'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "createdAt",to_char("resolvedAt",'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "resolvedAt",assignee FROM selected ORDER BY "createdAt" DESC,id LIMIT 20 OFFSET ${(page - 1) * 20})
     SELECT jsonb_build_object('total',(SELECT count(*) FROM selected),'tickets',coalesce((SELECT jsonb_agg(recent ORDER BY "createdAt" DESC,id) FROM recent),'[]'::jsonb)) AS data`);
   return { ...result[0].data, page, filters };
 }
