@@ -25,6 +25,7 @@ const titles: Record<string, string> = {
   CRIADO: 'Novo chamado',
   RESPONSAVEL_ALTERADO: 'Chamado transferido para você',
   APOIO_ADICIONADO: 'Você foi adicionado como apoio',
+  EQUIPE_ALTERADA: 'Chamado recebido de outra equipe',
   COMENTARIO: 'Novo comentário',
   RESOLVIDO: 'Chamado resolvido',
 };
@@ -53,9 +54,14 @@ export async function dispatchPushBatch(sender: PushSender = send) {
       const ticket = event.ticket;
       const user = sub.user;
       const canRead =
-        ['TI', 'ADMIN'].includes(user.role) ||
+        user.role === 'ADMIN' ||
+        (user.role === 'TI' &&
+          (user.teamId === ticket.teamId ||
+            ticket.participants.some((p) => p.userId === user.id))) ||
         (user.role === 'FUNCIONARIO' && ticket.requesterId === user.id);
-      const stillRecipient = event.type !== 'CRIADO' || user.role === 'TI';
+      const stillRecipient =
+        !['CRIADO', 'EQUIPE_ALTERADA'].includes(event.type) ||
+        (user.role === 'TI' && user.teamId === ticket.teamId);
       const expired = job.createdAt.getTime() < Date.now() - 24 * 60 * 60 * 1000;
       const finish = (status: string, lastStatus?: number) =>
         db.pushDelivery.updateMany({
