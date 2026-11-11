@@ -895,3 +895,29 @@ test('leituras de estoque respeitam papel e organização', async () => {
   const detail = await stock.stockItemDetail(keeper, target.id);
   assert.equal(detail.item.id, target.id); assert.equal(detail.keeper, true);
 });
+
+test('toque duplo ao criar ferramenta ou material sem entrada devolve o item criado', async () => {
+  for (const kind of ['FERRAMENTA','MATERIAL']) {
+    const input = { kind, name: itemName('Novo'), teamId: tiTeam, unit: 'METRO', minimum: '2', requestId: randomUUID() };
+    const [a,b] = await Promise.all([createItem(keeper, input), createItem(keeper, input)]);
+    assert.equal(a.item.id, b.item.id); assert.equal(a.movement, null);
+    assert.equal((await createItem(keeper, input)).item.id, a.item.id);
+    assert.equal(await db.stockItem.count({ where: { organizationId, name: input.name } }), 1);
+    await assert.rejects(createItem(admin, input), { status: 409 });
+    await assert.rejects(createItem(keeper, { ...input, requestId: randomUUID() }), { message: 'Já existe um item com este nome.' });
+  }
+});
+test('reutilizar requestId em outro item ou tipo não dá sucesso falso; funcionário continua 404', async () => {
+  const a = await material(null, '5'), b = await material(null, '5');
+  const requestId = randomUUID();
+  await addEntry(keeper, a.id, { quantity: '1', requestId });
+  await assert.rejects(addEntry(keeper, b.id, { quantity: '1', requestId }), { status: 409 });
+  await assert.rejects(adjustCount(keeper, a.id, { counted: '5', reason: 'Contagem física', requestId }), { status: 409 });
+  await assert.rejects(addEntry(employee, a.id, { quantity: '1', requestId: 'inválido' }), { status: 404 });
+});
+test('ajuste com delta fora de NUMERIC(12,3) devolve erro de campo, sem gravar', async () => {
+  const target = await material(null, '0');
+  await db.stockItem.update({ where: { id: target.id }, data: { balance: '-999999999.999' } });
+  await assert.rejects(adjustCount(keeper, target.id, { counted: '999999999.999', reason: 'Contagem física', requestId: randomUUID() }), { status: 400 });
+  assert.equal((await item(target.id)).balance.toString(), '-999999999.999');
+});

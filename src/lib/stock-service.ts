@@ -50,7 +50,9 @@ export async function withRequestId<T>(
   requestId: unknown,
   run: (requestId: string) => Promise<T>,
   replay: (movement: StockMovement) => T | Promise<T>,
+  expected?: { itemId?: string; type?: StockMovementType; ticketId?: string; reversesId?: string },
 ): Promise<T> {
+  await stockActor(db, actorId, 'view');
   const parsed = z.uuid().safeParse(requestId);
   if (!parsed.success)
     throw new AppError('Formulário expirado. Recarregue a página e tente novamente.');
@@ -75,6 +77,8 @@ export async function withRequestId<T>(
         'Este formulário já foi enviado por outra pessoa. Recarregue a página.',
         409,
       );
+    if (expected && Object.entries(expected).some(([key, value]) => existing[key as keyof StockMovement] !== value))
+      throw new AppError('Este formulário já foi usado para outro lançamento. Recarregue a página.', 409);
     return replay(existing);
   }
 }
@@ -142,6 +146,7 @@ export async function applyMaterialMovement(
   },
 ): Promise<StockMovement> {
   if (item.kind !== 'MATERIAL') throw new AppError('Este item não é um material.');
+  if (move.delta.abs().gt(MAX_BALANCE)) throw new AppError('A diferença da contagem passa do limite permitido. Confira a quantidade.');
   const balance = item.balance.plus(move.delta);
   if (balance.abs().gt(MAX_BALANCE))
     throw new AppError('O saldo passaria do limite permitido. Confira a quantidade.');
@@ -202,6 +207,17 @@ export async function createItem(
     (requestId) =>
       db.$transaction(async (tx) => {
         const user = await stockActor(tx, actorId, 'keep');
+        // Creation without an entry has no movement to replay. Keep its request in the existing
+        // immutable creation audit and serialize this request across concurrent submissions.
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${user.organizationId}), hashtext(${requestId}))`;
+        const created = await tx.stockItemAudit.findFirst({ where: { organizationId: user.organizationId,
+          action: 'CRIADO', metadata: { path: ['requestId'], equals: requestId } } });
+        if (created) {
+          if (created.actorId !== actorId) throw new AppError('Este formulário já foi enviado por outra pessoa. Recarregue a página.', 409);
+          const item = await tx.stockItem.findUniqueOrThrow({ where: { id: created.itemId } });
+          const movement = await tx.stockMovement.findUnique({ where: { organizationId_requestId: { organizationId: user.organizationId, requestId } } });
+          return { item, movement };
+        }
         const kind = Object.values(StockItemKind).find((k) => k === input.kind);
         if (!kind) throw new AppError('Selecione o tipo do item.');
         const fields = await itemFields(tx, user.organizationId, kind, input);
@@ -216,6 +232,7 @@ export async function createItem(
             actorId: user.id,
             action: 'CRIADO',
             metadata: {
+              requestId,
               kind,
               name: fields.name,
               teamId: fields.teamId,
@@ -237,10 +254,12 @@ export async function createItem(
         });
         return { item: await tx.stockItem.findUniqueOrThrow({ where: { id: item.id } }), movement };
       }),
-    async (movement) => ({
-      item: await db.stockItem.findUniqueOrThrow({ where: { id: movement.itemId } }),
-      movement,
-    }),
+    async (movement) => {
+      const audit = await db.stockItemAudit.findFirst({ where: { itemId: movement.itemId, actorId,
+        action: 'CRIADO', metadata: { path: ['requestId'], equals: input.requestId } } });
+      if (!audit) throw new AppError('Este formulário já foi usado para outro lançamento. Recarregue a página.', 409);
+      return { item: await db.stockItem.findUniqueOrThrow({ where: { id: movement.itemId } }), movement };
+    },
   ).catch(duplicateName);
 }
 export async function updateItem(actorId: string, itemId: string, input: ItemInput) {
@@ -308,6 +327,7 @@ export async function addEntry(
         });
       }),
     (movement) => movement,
+    { itemId, type: 'ENTRADA' },
   );
 }
 export async function adjustCount(
@@ -339,6 +359,7 @@ export async function adjustCount(
         });
       }),
     (movement) => movement,
+    { itemId, type: 'AJUSTE' },
   );
 }
 /**
