@@ -961,3 +961,93 @@ test('ajuste com delta fora de NUMERIC(12,3) devolve erro de campo, sem gravar',
   );
   assert.equal((await item(target.id)).balance.toString(), '-999999999.999');
 });
+
+test('replay valida item, chamado, tipo e alvo do estorno em todas as operações', async () => {
+  const a = await material(null, '10'),
+    b = await material(null, '10');
+  const firstTicket = await claimedTicket(),
+    secondTicket = await claimedTicket();
+  const key = randomUUID();
+  const original = await use(tech, firstTicket.id, a.id, '1', key);
+  await assert.rejects(use(tech, secondTicket.id, b.id, '1', key), { status: 409 });
+  await assert.rejects(reverse(tech, original.id, key), { status: 409 });
+  assert.equal((await item(b.id)).balance.toString(), '10');
+  const other = await use(tech, secondTicket.id, b.id);
+  const reversalKey = randomUUID();
+  await reverse(tech, original.id, reversalKey);
+  await assert.rejects(reverse(tech, other.id, reversalKey), { status: 409 });
+  assert.equal(await db.stockMovement.count({ where: { reversesId: other.id } }), 0);
+});
+test('replay de uso reconhece lançamento antes do prazo ou estado mudar, sem devolver acesso removido', async () => {
+  const target = await material(null, '10'),
+    ticket = await claimedTicket();
+  await setSupport(tech, ticket.id, electrician, true);
+  const supportKey = randomUUID();
+  await use(electrician, ticket.id, target.id, '1', supportKey);
+  await setSupport(tech, ticket.id, electrician, false);
+  await assert.rejects(use(electrician, ticket.id, target.id, '1', supportKey), { status: 404 });
+  await changeStatus(tech, ticket.id, { status: 'RESOLVIDO', note: 'Serviço concluído' });
+  await db.ticket.update({
+    where: { id: ticket.id },
+    data: { resolvedAt: new Date(Date.now() - 47 * HOUR) },
+  });
+  const key = randomUUID(),
+    first = await use(tech, ticket.id, target.id, '1', key);
+  await db.ticket.update({
+    where: { id: ticket.id },
+    data: { resolvedAt: new Date(Date.now() - 49 * HOUR) },
+  });
+  await deactivateItem(keeper, target.id, 'Material fora de linha');
+  assert.equal((await use(tech, ticket.id, target.id, '1', key)).id, first.id);
+  assert.equal((await item(target.id)).balance.toString(), '8');
+  const entryItem = await material(null, '1'),
+    entryKey = randomUUID();
+  const entry = await addEntry(keeper, entryItem.id, { quantity: '1', requestId: entryKey });
+  await deactivateItem(keeper, entryItem.id, 'Fora de linha');
+  assert.equal(
+    (await addEntry(keeper, entryItem.id, { quantity: '1', requestId: entryKey })).id,
+    entry.id,
+  );
+  const temporaryKeeper = await makeUser('TI', { stockKeeper: true });
+  const otherItem = await material(null, '1'),
+    restrictedKey = randomUUID();
+  await addEntry(temporaryKeeper.id, otherItem.id, { quantity: '1', requestId: restrictedKey });
+  await db.user.update({ where: { id: temporaryKeeper.id }, data: { stockKeeper: false } });
+  await assert.rejects(
+    addEntry(temporaryKeeper.id, otherItem.id, { quantity: '1', requestId: restrictedKey }),
+    { status: 403 },
+  );
+});
+test('ferramentas repetem o mesmo formulário sequencial e concorrente uma vez só', async () => {
+  const target = await tool(),
+    takeKey = randomUUID(),
+    returnKey = randomUUID();
+  const [a, b] = await Promise.all([
+    takeTool(tech, target.id, { requestId: takeKey }),
+    takeTool(tech, target.id, { requestId: takeKey }),
+  ]);
+  assert.equal(a.id, b.id);
+  assert.equal(a.requestId, takeKey);
+  assert.equal((await takeTool(tech, target.id, { requestId: takeKey })).id, a.id);
+  const [r1, r2] = await Promise.all([
+    returnTool(tech, target.id, { requestId: returnKey }),
+    returnTool(tech, target.id, { requestId: returnKey }),
+  ]);
+  assert.equal(r1.id, r2.id);
+  assert.equal(r1.requestId, returnKey);
+  assert.equal((await returnTool(tech, target.id, { requestId: returnKey })).id, r1.id);
+  assert.equal(await db.stockMovement.count({ where: { itemId: target.id } }), 2);
+});
+test('reenvio de devolução não remove quem pegou a ferramenta depois', async () => {
+  const target = await tool();
+  await takeTool(tech, target.id);
+  const key = randomUUID(),
+    first = await returnTool(keeper, target.id, { requestId: key });
+  await takeTool(electrician, target.id);
+  assert.equal((await returnTool(keeper, target.id, { requestId: key })).id, first.id);
+  assert.equal((await item(target.id)).holderId, electrician);
+  assert.equal(
+    await db.stockMovement.count({ where: { itemId: target.id, type: 'DEVOLUCAO' } }),
+    1,
+  );
+});

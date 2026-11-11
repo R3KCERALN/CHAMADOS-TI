@@ -189,3 +189,61 @@ test('foto conferida há mais de 1 ano é apagada; questionada não; encerrada v
   assert.ok(await db.stockMovement.findUnique({ where: { id: confirmed.id } }));
   assert.equal(await db.stockReview.count({ where: { movementId: closed.id } }), 2);
 });
+
+test('replay avulso recusa requestId de outro item e repete foto após desativação', async () => {
+  const first = await use();
+  const second = await use();
+  const requestId = randomUUID();
+  const original = await recordOffTicketUse(
+    f.tech,
+    { itemId: first.itemId, quantity: '1', requestId },
+    await photo(),
+  );
+  await assert.rejects(
+    recordOffTicketUse(f.tech, { itemId: second.itemId, quantity: '1', requestId }, await photo()),
+    { status: 409 },
+  );
+  await db.stockItem.update({ where: { id: first.itemId }, data: { active: false } });
+  assert.equal(
+    (
+      await recordOffTicketUse(
+        f.tech,
+        { itemId: first.itemId, quantity: '1', requestId },
+        await photo(),
+      )
+    ).id,
+    original.id,
+  );
+  assert.equal(await db.stockPhoto.count({ where: { movementId: original.id } }), 1);
+});
+test('PNG válido abaixo de 5 MB com transparência cabe no limite de guarda após conversão', async () => {
+  const side = 1600,
+    raw = Buffer.alloc(side * side * 4, 255);
+  let seed = 0x12345678;
+  for (let i = 0; i < side * side; i++) {
+    seed ^= seed << 13;
+    seed ^= seed >>> 17;
+    seed ^= seed << 5;
+    raw[i * 4 + 3] = seed >>> 24;
+  }
+  const png = await sharp(raw, { raw: { width: side, height: side, channels: 4 } })
+    .png()
+    .toBuffer();
+  assert.ok(png.length < MAX_PHOTO_BYTES);
+  const processed = await processAuthorizationPhoto(png);
+  assert.ok(processed.size <= 2 * 1024 * 1024, `WebP ficou com ${processed.size} bytes`);
+  const { item } = await createItem(f.keeper, {
+    kind: 'MATERIAL',
+    name: randomUUID(),
+    teamId: f.ti,
+    unit: 'METRO',
+    initialQuantity: '2',
+    requestId: randomUUID(),
+  });
+  const movement = await recordOffTicketUse(
+    f.tech,
+    { itemId: item.id, quantity: '1', requestId: randomUUID() },
+    processed,
+  );
+  assert.ok(await authorizationPhoto(f.admin, movement.id));
+});

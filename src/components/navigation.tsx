@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { useStockCount } from './stock/count-provider';
 import { usePathname } from 'next/navigation';
 import {
   ArrowUpRight,
@@ -31,6 +32,7 @@ function current(pathname: string, item: Item) {
 
 export function AppNavigation({ role, lowStock = 0 }: { role: Role; lowStock?: number }) {
   const pathname = usePathname();
+  const stockCount = useStockCount(lowStock);
   const tech = role === 'TI' || role === 'ADMIN';
   const items = navigationItems(role);
   return (
@@ -48,9 +50,9 @@ export function AppNavigation({ role, lowStock = 0 }: { role: Role; lowStock?: n
             >
               <Icon size={19} aria-hidden="true" />
               {item.label}
-              {item.href === '/estoque' && lowStock > 0 && (
-                <span className="nav-badge" aria-label={`${lowStock} materiais acabando`}>
-                  {lowStock}
+              {item.href === '/estoque' && stockCount > 0 && (
+                <span className="nav-badge" aria-label={`${stockCount} materiais acabando`}>
+                  {stockCount}
                 </span>
               )}
             </Link>
@@ -107,6 +109,7 @@ function navigationItems(role: Role): Item[] {
 
 export function MobileNavigation({ role, lowStock = 0 }: { role: Role; lowStock?: number }) {
   const pathname = usePathname();
+  const stockCount = useStockCount(lowStock);
   const tech = role === 'TI' || role === 'ADMIN';
   const mobileItems: Item[] = [
     ...navigationItems(role),
@@ -128,9 +131,9 @@ export function MobileNavigation({ role, lowStock = 0 }: { role: Role; lowStock?
             aria-current={active ? 'page' : undefined}
           >
             {item.mobileLabel || item.label}
-            {item.href === '/estoque' && lowStock > 0 && (
-              <span className="nav-badge" aria-label={`${lowStock} materiais acabando`}>
-                {lowStock}
+            {item.href === '/estoque' && stockCount > 0 && (
+              <span className="nav-badge" aria-label={`${stockCount} materiais acabando`}>
+                {stockCount}
               </span>
             )}
           </Link>

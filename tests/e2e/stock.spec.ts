@@ -173,6 +173,7 @@ test('estoque no celular: pegar ferramenta, usar material no chamado e fora dele
   await login(page, f.employee);
   const denied = await page.goto('/estoque');
   expect(denied?.status()).toBe(404);
+  expect((await page.request.get('/api/estoque/resumo')).status()).toBe(404);
   expect(errors).toEqual([]);
 });
 test('upload de autorização recusa outra origem, falta de tamanho e papel errado', async ({
@@ -212,6 +213,7 @@ test('upload de autorização recusa outra origem, falta de tamanho e papel erra
   expect((await page.request.get(`/api/estoque/fotos/${privatePhoto}`)).status()).toBe(404);
   await logout(page);
   await login(page, f.manager);
+  expect((await page.request.get('/api/estoque/resumo')).status()).toBe(200);
   expect(
     (
       await page.request.post('/api/estoque/uso-avulso', {
@@ -219,4 +221,62 @@ test('upload de autorização recusa outra origem, falta de tamanho e papel erra
       })
     ).status(),
   ).toBe(403);
+});
+
+test('contador acompanha mudanças de outra sessão ao navegar por links e filtros', async ({
+  page,
+  browser,
+}) => {
+  const { item } = await createItem(f.admin, {
+    kind: 'MATERIAL',
+    name: 'Contador ' + randomUUID(),
+    teamId: f.ti,
+    unit: 'METRO',
+    initialQuantity: '3',
+    minimum: '2',
+    requestId: randomUUID(),
+  });
+  const baseline = await db.stockAlert.count({
+    where: { organizationId: f.organizationId, closedAt: null },
+  });
+  await login(page, f.tech);
+  await page.goto('/estoque');
+  const other = await browser.newPage();
+  await login(other, f.admin);
+  await other.goto(`/estoque/itens/${item.id}`);
+  const adjustment = other
+    .locator('section')
+    .filter({ has: other.getByRole('heading', { name: 'Ajuste', exact: true }) });
+  const count = async () => {
+    await adjustment.getByLabel('Quantidade contada').fill('1');
+    await adjustment.getByLabel('Motivo', { exact: true }).fill('Contagem por outra sessão');
+    await adjustment.getByRole('button', { name: 'Ajustar contagem' }).click();
+    await expect(adjustment.getByRole('status')).toContainText('Contagem registrada');
+  };
+  await count();
+  await page.locator('.mobile-nav a[href="/chamados"]').click();
+  await expect(
+    page.locator('.mobile-nav').getByLabel(`${baseline + 1} materiais acabando`, { exact: true }),
+  ).toBeVisible();
+  const entry = other
+    .locator('section')
+    .filter({ has: other.getByRole('heading', { name: 'Entrada', exact: true }) });
+  await entry.getByLabel('Quantidade', { exact: true }).fill('5');
+  await entry.getByRole('button', { name: 'Registrar entrada' }).click();
+  await expect(entry.getByRole('status')).toContainText('Entrada registrada');
+  await page.locator('.mobile-nav a[href="/estoque"]').click();
+  if (baseline)
+    await expect(
+      page.locator('.mobile-nav').getByLabel(`${baseline} materiais acabando`, { exact: true }),
+    ).toBeVisible();
+  else await expect(page.locator('.mobile-nav .nav-badge')).toHaveCount(0);
+  await count();
+  await page
+    .getByRole('navigation', { name: 'Tipos de estoque' })
+    .getByRole('link', { name: /^Materiais/ })
+    .click();
+  await expect(
+    page.locator('.mobile-nav').getByLabel(`${baseline + 1} materiais acabando`, { exact: true }),
+  ).toBeVisible();
+  await other.close();
 });

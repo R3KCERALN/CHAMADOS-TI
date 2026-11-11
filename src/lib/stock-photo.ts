@@ -21,13 +21,16 @@ export async function processAuthorizationPhoto(bytes: Uint8Array): Promise<Proc
     throw new AppError('A foto passa de 5 MB. Tire um print menor ou reduza a imagem.');
   if (!detectImageType(bytes)) throw new AppError('Envie uma imagem JPEG, PNG ou WebP.');
   try {
-    const data = await sharp(bytes, { limitInputPixels: 40_000_000, failOn: 'error' })
-      .rotate()
-      .resize({ width: 1600, height: 1600, fit: 'inside', withoutEnlargement: true })
-      .webp({ quality: 80 })
-      .toBuffer();
-    return { data, mime: 'image/webp', size: data.length };
+    for (const side of [1600, 1200, 800]) {
+      const data = await sharp(bytes, { limitInputPixels: 40_000_000, failOn: 'error' })
+        .rotate()
+        .resize({ width: side, height: side, fit: 'inside', withoutEnlargement: true })
+        .webp({ quality: 80 })
+        .toBuffer();
+      if (data.length <= 2 * 1024 * 1024) return { data, mime: 'image/webp', size: data.length };
+    }
   } catch {
     throw new AppError('Não foi possível ler esta imagem.');
   }
+  throw new AppError('A foto ficou muito grande. Tire um print menor ou reduza a imagem.');
 }

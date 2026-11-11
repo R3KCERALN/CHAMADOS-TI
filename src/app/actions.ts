@@ -309,11 +309,11 @@ export async function stockAction(_: FormState, form: FormData): Promise<FormSta
         success = 'Lançamento estornado.';
         break;
       case 'pegar':
-        await stock.takeTool(user.id, itemId);
+        await stock.takeTool(user.id, itemId, { requestId: value(form, 'requestId') });
         success = 'Ferramenta registrada com você.';
         break;
       case 'devolver':
-        await stock.returnTool(user.id, itemId);
+        await stock.returnTool(user.id, itemId, { requestId: value(form, 'requestId') });
         success = 'Ferramenta devolvida.';
         break;
       case 'desativar':

@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { db } from './db';
 import { AppError } from './errors';
 import { requireTeam } from './teams';
-import { stockActor } from './stock-access';
+import { stockActor, type StockNeed } from './stock-access';
 import { canSee } from './services';
 import { queueStockAlertNotifications } from './stock-notifications';
 import {
@@ -51,27 +51,19 @@ export async function withRequestId<T>(
   run: (requestId: string) => Promise<T>,
   replay: (movement: StockMovement) => T | Promise<T>,
   expected?: { itemId?: string; type?: StockMovementType; ticketId?: string; reversesId?: string },
+  need: StockNeed = 'operate',
 ): Promise<T> {
-  await stockActor(db, actorId, 'view');
+  const user = await stockActor(db, actorId, need);
   const parsed = z.uuid().safeParse(requestId);
   if (!parsed.success)
     throw new AppError('Formulário expirado. Recarregue a página e tente novamente.');
-  try {
-    return await run(parsed.data);
-  } catch (error) {
-    if (!isUniqueViolation(error)) throw error;
-    const user = await db.user.findUnique({
-      where: { id: actorId },
-      select: { organizationId: true },
+  const find = () =>
+    db.stockMovement.findUnique({
+      where: {
+        organizationId_requestId: { organizationId: user.organizationId, requestId: parsed.data },
+      },
     });
-    const existing =
-      user &&
-      (await db.stockMovement.findUnique({
-        where: {
-          organizationId_requestId: { organizationId: user.organizationId, requestId: parsed.data },
-        },
-      }));
-    if (!existing) throw error;
+  const result = (existing: StockMovement) => {
     if (existing.actorId !== actorId)
       throw new AppError(
         'Este formulário já foi enviado por outra pessoa. Recarregue a página.',
@@ -88,6 +80,19 @@ export async function withRequestId<T>(
         409,
       );
     return replay(existing);
+  };
+  // A committed request succeeds even when its deadline, balance or active state changed later.
+  const existing = await find();
+  if (existing) return result(existing);
+  try {
+    return await run(parsed.data);
+  } catch (error) {
+    // Another first submission may have committed while this one waited on the item lock.
+    // Resolve outside the failed transaction, including conflicts raised before an INSERT.
+    await stockActor(db, actorId, need);
+    const committed = await find();
+    if (!committed) throw error;
+    return result(committed);
   }
 }
 export async function lockItem(tx: Tx, itemId: string, organizationId: string) {
@@ -293,6 +298,8 @@ export async function createItem(
         movement,
       };
     },
+    undefined,
+    'keep',
   ).catch(duplicateName);
 }
 export async function updateItem(actorId: string, itemId: string, input: ItemInput) {
@@ -361,6 +368,7 @@ export async function addEntry(
       }),
     (movement) => movement,
     { itemId, type: 'ENTRADA' },
+    'keep',
   );
 }
 export async function adjustCount(
@@ -393,70 +401,95 @@ export async function adjustCount(
       }),
     (movement) => movement,
     { itemId, type: 'AJUSTE' },
+    'keep',
   );
 }
 /**
  * "Peguei": a single conditional UPDATE decides the race. Two concurrent takes serialize on the
  * row; the loser re-evaluates `holderId IS NULL`, updates nothing and gets a 409.
  */
-export async function takeTool(actorId: string, itemId: string): Promise<StockMovement> {
-  return db.$transaction(async (tx) => {
-    const user = await stockActor(tx, actorId, 'operate');
-    const where = { id: itemId, organizationId: user.organizationId };
-    const result = await tx.stockItem.updateMany({
-      where: { ...where, kind: 'FERRAMENTA', active: true, holderId: null },
-      data: { holderId: user.id, heldSince: new Date() },
+export async function takeTool(
+  actorId: string,
+  itemId: string,
+  input?: { requestId: string },
+): Promise<StockMovement> {
+  const run = (requestId?: string) =>
+    db.$transaction(async (tx) => {
+      const user = await stockActor(tx, actorId, 'operate');
+      const where = { id: itemId, organizationId: user.organizationId };
+      const result = await tx.stockItem.updateMany({
+        where: { ...where, kind: 'FERRAMENTA', active: true, holderId: null },
+        data: { holderId: user.id, heldSince: new Date() },
+      });
+      if (result.count !== 1) {
+        const item = await tx.stockItem.findFirst({ where });
+        if (!item) throw new AppError('Item não encontrado.', 404);
+        if (item.kind !== 'FERRAMENTA') throw new AppError('Este item não é uma ferramenta.');
+        if (!item.active) throw new AppError('Esta ferramenta está desativada.', 409);
+        if (item.holderId === user.id) throw new AppError('Esta ferramenta já está com você.', 409);
+        throw new AppError('Esta ferramenta já está com outra pessoa. Atualize a página.', 409);
+      }
+      const item = await tx.stockItem.findUniqueOrThrow({ where: { id: itemId } });
+      return tx.stockMovement.create({
+        data: {
+          organizationId: user.organizationId,
+          itemId: item.id,
+          type: 'RETIRADA',
+          requestId,
+          actorId: user.id,
+          itemTeamId: item.teamId,
+          actorTeamId: user.teamId,
+        },
+      });
     });
-    if (result.count !== 1) {
-      const item = await tx.stockItem.findFirst({ where });
-      if (!item) throw new AppError('Item não encontrado.', 404);
-      if (item.kind !== 'FERRAMENTA') throw new AppError('Este item não é uma ferramenta.');
-      if (!item.active) throw new AppError('Esta ferramenta está desativada.', 409);
-      if (item.holderId === user.id) throw new AppError('Esta ferramenta já está com você.', 409);
-      throw new AppError('Esta ferramenta já está com outra pessoa. Atualize a página.', 409);
-    }
-    const item = await tx.stockItem.findUniqueOrThrow({ where: { id: itemId } });
-    return tx.stockMovement.create({
-      data: {
-        organizationId: user.organizationId,
-        itemId: item.id,
+  return input
+    ? withRequestId(actorId, input.requestId, run, (movement) => movement, {
+        itemId,
         type: 'RETIRADA',
-        actorId: user.id,
-        itemTeamId: item.teamId,
-        actorTeamId: user.teamId,
-      },
-    });
-  });
+      })
+    : run();
 }
 /** "Devolvi": the holder, or a stock keeper for anyone (including a deactivated holder). */
-export async function returnTool(actorId: string, itemId: string): Promise<StockMovement> {
-  return db.$transaction(async (tx) => {
-    const user = await stockActor(tx, actorId, 'operate');
-    const item = await lockItem(tx, itemId, user.organizationId);
-    if (item.kind !== 'FERRAMENTA') throw new AppError('Este item não é uma ferramenta.');
-    if (!item.holderId)
-      throw new AppError('Esta ferramenta já está guardada. Atualize a página.', 409);
-    if (item.holderId !== user.id && !user.keeper)
-      throw new AppError(
-        'Só quem está com a ferramenta ou um responsável de estoque pode devolvê-la.',
-        403,
-      );
-    await tx.stockItem.update({
-      where: { id: item.id },
-      data: { holderId: null, heldSince: null },
+export async function returnTool(
+  actorId: string,
+  itemId: string,
+  input?: { requestId: string },
+): Promise<StockMovement> {
+  const run = (requestId?: string) =>
+    db.$transaction(async (tx) => {
+      const user = await stockActor(tx, actorId, 'operate');
+      const item = await lockItem(tx, itemId, user.organizationId);
+      if (item.kind !== 'FERRAMENTA') throw new AppError('Este item não é uma ferramenta.');
+      if (!item.holderId)
+        throw new AppError('Esta ferramenta já está guardada. Atualize a página.', 409);
+      if (item.holderId !== user.id && !user.keeper)
+        throw new AppError(
+          'Só quem está com a ferramenta ou um responsável de estoque pode devolvê-la.',
+          403,
+        );
+      await tx.stockItem.update({
+        where: { id: item.id },
+        data: { holderId: null, heldSince: null },
+      });
+      return tx.stockMovement.create({
+        data: {
+          organizationId: user.organizationId,
+          itemId: item.id,
+          type: 'DEVOLUCAO',
+          requestId,
+          actorId: user.id,
+          targetUserId: item.holderId,
+          itemTeamId: item.teamId,
+          actorTeamId: user.teamId,
+        },
+      });
     });
-    return tx.stockMovement.create({
-      data: {
-        organizationId: user.organizationId,
-        itemId: item.id,
+  return input
+    ? withRequestId(actorId, input.requestId, run, (movement) => movement, {
+        itemId,
         type: 'DEVOLUCAO',
-        actorId: user.id,
-        targetUserId: item.holderId,
-        itemTeamId: item.teamId,
-        actorTeamId: user.teamId,
-      },
-    });
-  });
+      })
+    : run();
 }
 /** Deactivates a tool or a material. History stays; a held tool is released, an open alert closes. */
 export async function deactivateItem(
@@ -512,6 +545,20 @@ function participates(
     ticket.participants.some((p) => p.userId === user.id)
   );
 }
+async function ticketForUse(
+  client: Tx | typeof db,
+  user: Awaited<ReturnType<typeof stockActor>>,
+  ticketId: string,
+) {
+  const ticket = await client.ticket.findFirst({
+    where: { id: ticketId, organizationId: user.organizationId },
+    include: { participants: true },
+  });
+  if (!ticket || !canSee(user, ticket)) throw new AppError('Chamado não encontrado.', 404);
+  if (!participates(user, ticket))
+    throw new AppError('Só quem participa do chamado pode registrar materiais.', 403);
+  return ticket;
+}
 export async function recordTicketUse(
   actorId: string,
   ticketId: string,
@@ -521,6 +568,7 @@ export async function recordTicketUse(
     requestId: string;
   },
 ): Promise<StockMovement> {
+  await ticketForUse(db, await stockActor(db, actorId, 'operate'), ticketId);
   return withRequestId(
     actorId,
     input.requestId,
@@ -528,13 +576,7 @@ export async function recordTicketUse(
       db.$transaction(async (tx) => {
         const user = await stockActor(tx, actorId, 'operate');
         await tx.$queryRaw`SELECT id FROM "Ticket" WHERE id = ${ticketId} AND "organizationId" = ${user.organizationId} FOR SHARE`;
-        const ticket = await tx.ticket.findFirst({
-          where: { id: ticketId, organizationId: user.organizationId },
-          include: { participants: true },
-        });
-        if (!ticket || !canSee(user, ticket)) throw new AppError('Chamado não encontrado.', 404);
-        if (!participates(user, ticket))
-          throw new AppError('Só quem participa do chamado pode registrar materiais.', 403);
+        const ticket = await ticketForUse(tx, user, ticketId);
         if (!withinTicketWindow(ticket))
           throw new AppError(
             'O prazo de 48 horas depois da resolução acabou. Registre como uso fora de chamado, com foto.',
@@ -551,6 +593,7 @@ export async function recordTicketUse(
         });
       }),
     (movement) => movement,
+    { itemId: input.itemId, type: 'USO_CHAMADO', ticketId },
   );
 }
 export async function reverseMovement(
@@ -603,6 +646,7 @@ export async function reverseMovement(
         });
       }),
     (movement) => movement,
+    { type: 'ESTORNO', reversesId: movementId },
   );
 }
 export async function ticketMaterials(actorId: string, ticketId: string) {
@@ -677,6 +721,7 @@ export async function recordOffTicketUse(
         return movement;
       }),
     (movement) => movement,
+    { itemId: input.itemId, type: 'USO_AVULSO' },
   );
 }
 export async function authorizationPhoto(
