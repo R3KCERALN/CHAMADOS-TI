@@ -3,6 +3,7 @@ import { notFound } from 'next/navigation';
 import { Plus, ArrowUpRight } from 'lucide-react';
 import { requireUser } from '@/lib/auth';
 import { adminUsers } from '@/lib/services';
+import { teamsWithoutStockKeeper } from '@/lib/stock-access';
 import { roleLabels } from '@/lib/labels';
 import { Pagination } from '@/components/pagination';
 export default async function UsersPage({
@@ -17,6 +18,7 @@ export default async function UsersPage({
     q: params.busca,
     page: Number(params.pagina),
   });
+  const missingKeepers = await teamsWithoutStockKeeper(user.organizationId);
   return (
     <>
       <div className="page-heading">
@@ -35,6 +37,11 @@ export default async function UsersPage({
           Usuário criado. Compartilhe a senha temporária diretamente com a pessoa.
         </p>
       )}
+      {missingKeepers.map((team) => (
+        <p key={team.id} className="notice" role="status">
+          Equipe {team.name} sem responsável de estoque.
+        </p>
+      ))}
       <section className="panel list-panel">
         <div className="section-heading">
           <h2>
@@ -75,6 +82,9 @@ export default async function UsersPage({
                 <tr key={person.id}>
                   <td>
                     <strong>{person.name}</strong>
+                    {person.stockKeeper && (
+                      <span className="status status-AGUARDANDO">Estoque</span>
+                    )}
                     <small>@{person.username}</small>
                   </td>
                   <td>{person.department.name}</td>

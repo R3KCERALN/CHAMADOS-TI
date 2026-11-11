@@ -19,6 +19,7 @@ export function UserFields({
     role: string;
     departmentId: string;
     teamId?: string | null;
+    stockKeeper?: boolean;
     active: boolean;
     primaryCompanyId: string | null;
     primaryUnitId: string | null;
@@ -123,6 +124,17 @@ export function UserFields({
             ))}
           </select>
           <FieldError name="teamId" id="teamId-error" />
+        </div>
+      )}
+      {role === 'TI' && (
+        <div className="field">
+          <label>
+            <input type="checkbox" name="stockKeeper" defaultChecked={user?.stockKeeper} />{' '}
+            Responsável de estoque
+          </label>
+          <p className="field-hint">
+            Cadastra itens, dá entrada, ajusta contagens e estorna lançamentos de qualquer pessoa.
+          </p>
         </div>
       )}
       <UserLocationFields companies={companies} user={user} />

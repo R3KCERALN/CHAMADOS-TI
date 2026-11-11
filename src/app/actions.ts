@@ -113,6 +113,7 @@ function userFields(form: FormData) {
     departmentId: value(form, 'departmentId'),
     role: value(form, 'role'),
     teamId: value(form, 'teamId') || null,
+    stockKeeper: form.get('stockKeeper') === 'on',
     primaryCompanyId: value(form, 'primaryCompanyId') || null,
     primaryUnitId: value(form, 'primaryUnitId') || null,
     additionalCompanyIds: form.getAll('additionalCompanyIds').map(String),
