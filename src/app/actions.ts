@@ -11,6 +11,7 @@ import { requireActionUser, SESSION_COOKIE } from '@/lib/auth';
 import { login, logout, changePassword } from '@/lib/auth-service';
 import * as service from '@/lib/services';
 import { saveCompany, saveUnit } from '@/lib/organization-service';
+import * as stock from '@/lib/stock-service';
 export type FormState = {
   error?: string;
   success?: string;
@@ -235,6 +236,57 @@ export async function ticketAction(_: FormState, form: FormData): Promise<FormSt
   }
   // The old team usually loses access to the ticket after the move.
   redirect('/chamados?movida=1');
+}
+export async function stockAction(_: FormState, form: FormData): Promise<FormState> {
+  try {
+    await sameOrigin();
+    const user = await requireActionUser();
+    const itemId = value(form, 'itemId');
+    const item = {
+      name: value(form, 'name'),
+      teamId: value(form, 'teamId'),
+      unit: value(form, 'unit') || null,
+      minimum: value(form, 'minimum') || null,
+    };
+    let success: string;
+    switch (value(form, 'intent')) {
+      case 'criar':
+        await stock.createItem(user.id, {
+          ...item,
+          kind: value(form, 'kind'),
+          initialQuantity: value(form, 'initialQuantity') || null,
+          requestId: value(form, 'requestId'),
+        });
+        success = 'Item cadastrado.';
+        break;
+      case 'editar':
+        await stock.updateItem(user.id, itemId, item);
+        success = 'Cadastro atualizado.';
+        break;
+      case 'entrada':
+        await stock.addEntry(user.id, itemId, {
+          quantity: value(form, 'quantity'),
+          note: value(form, 'note') || null,
+          requestId: value(form, 'requestId'),
+        });
+        success = 'Entrada registrada.';
+        break;
+      case 'ajuste':
+        await stock.adjustCount(user.id, itemId, {
+          counted: value(form, 'counted'),
+          reason: value(form, 'reason'),
+          requestId: value(form, 'requestId'),
+        });
+        success = 'Contagem registrada.';
+        break;
+      default:
+        throw new AppError('Operação inválida.');
+    }
+    revalidatePath('/estoque');
+    return { success };
+  } catch (error) {
+    return failure(error);
+  }
 }
 export async function categoryAction(_: FormState, form: FormData): Promise<FormState> {
   try {
