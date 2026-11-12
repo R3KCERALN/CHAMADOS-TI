@@ -59,10 +59,12 @@ export async function createUser(actorId: string, input: unknown) {
     const locations = await validateUserLocations(tx, admin.organizationId, data);
     const teamId =
       data.role === 'TI' ? (await requireTeam(tx, admin.organizationId, data.teamId)).id : null;
+    const stockKeeper = data.role === 'TI' && !!data.stockKeeper;
     const user = await tx.user.create({
       data: {
         organizationId: admin.organizationId,
         teamId,
+        stockKeeper,
         primaryCompanyId: locations.primaryCompanyId,
         primaryUnitId: locations.primaryUnitId,
         companyAccess: {
@@ -82,7 +84,7 @@ export async function createUser(actorId: string, input: unknown) {
         actorId,
         subjectId: user.id,
         action: 'USUARIO_CRIADO',
-        metadata: { role: data.role, departmentId: data.departmentId, teamId },
+        metadata: { role: data.role, departmentId: data.departmentId, teamId, stockKeeper },
       },
     });
     return user;
@@ -126,6 +128,7 @@ export async function updateUser(actorId: string, userId: string, input: unknown
         );
     }
     const { additionalCompanyIds, additionalUnitIds, ...fields } = data;
+    const stockKeeper = data.role === 'TI' && !!data.stockKeeper;
     const existingCompanies = await tx.userCompanyAccess.findMany({ where: { userId } });
     const existingUnits = await tx.userUnitAccess.findMany({ where: { userId } });
     const locations = await validateUserLocations(
@@ -157,6 +160,7 @@ export async function updateUser(actorId: string, userId: string, input: unknown
       data: {
         ...fields,
         teamId,
+        stockKeeper,
         primaryCompanyId: locations.primaryCompanyId,
         primaryUnitId: locations.primaryUnitId,
         companyAccess: {
@@ -182,10 +186,19 @@ export async function updateUser(actorId: string, userId: string, input: unknown
             teamId: before.teamId,
             active: before.active,
           },
-          after: { ...data, teamId },
+          after: { ...data, teamId, stockKeeper },
         },
       },
     });
+    if (stockKeeper !== before.stockKeeper)
+      await tx.userAudit.create({
+        data: {
+          actorId,
+          subjectId: userId,
+          action: 'RESPONSAVEL_ESTOQUE_ALTERADO',
+          metadata: { stockKeeper },
+        },
+      });
     return user;
   });
 }
@@ -284,7 +297,7 @@ export async function createTicket(actorId: string, input: unknown, requesterId?
 type Viewer = { id: string; role: Role; teamId: string | null };
 // Read scope: ADMIN sees everything; a technician sees the own team's tickets plus the ones
 // where they are support; the employee sees only the own requests; GESTOR has no detail.
-function canSee(user: Viewer, ticket: Ticket & { participants: { userId: string }[] }) {
+export function canSee(user: Viewer, ticket: Ticket & { participants: { userId: string }[] }) {
   if (user.role === 'ADMIN') return true;
   if (user.role === 'TI')
     return (

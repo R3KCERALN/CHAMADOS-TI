@@ -20,6 +20,7 @@ export const userSchema = z.object({
   departmentId: z.string().min(1, 'Selecione um setor.').max(100),
   role: z.enum(['ADMIN', 'FUNCIONARIO', 'TI', 'GESTOR']),
   teamId: z.string().max(100).nullable().optional(),
+  stockKeeper: z.boolean().optional(),
 });
 export const ticketSchema = z.object({
   companyId: z.string().max(100).nullable().optional(),

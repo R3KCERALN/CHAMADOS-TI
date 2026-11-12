@@ -1,3 +1,4 @@
+import { TicketMaterials } from '@/components/stock/ticket-materials';
 import { LiveUpdates } from '@/components/live-updates';
 import { operationalRevision } from '@/lib/live-updates';
 import { Fragment } from 'react';
@@ -560,6 +561,7 @@ export default async function TicketPage({
           <p className="aside-note">Cada atualização fica registrada no histórico deste chamado.</p>
         </aside>
       </div>
+      {tech && <TicketMaterials actorId={user.id} ticketId={id} />}
     </>
   );
 }

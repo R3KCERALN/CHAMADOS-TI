@@ -18,6 +18,7 @@ export const publicUserSelect = {
   role: true,
   active: true,
   mustChangePassword: true,
+  stockKeeper: true,
 } as const;
 export const hashPassword = (password: string) =>
   argon2.hash(passwordSchema.parse(password), {

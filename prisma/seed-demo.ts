@@ -15,13 +15,14 @@ import type {
 const organizationId = APP_ORGANIZATION_ID;
 async function main() {
   const name = new URL(process.env.DATABASE_URL!).pathname.slice(1);
-  if (process.env.SEED_DEMO !== 'true' || !name.endsWith('_demo'))
+  if (process.env.SEED_DEMO !== 'true' || name !== 'central_suporte_demo')
     throw new Error(
-      'Seed fictício permitido somente com SEED_DEMO=true em banco terminado em _demo.',
+      'Seed fictício permitido somente com SEED_DEMO=true no banco central_suporte_demo.',
     );
   if (!process.env.DEMO_PASSWORD) throw new Error('Configure DEMO_PASSWORD.');
   if (await db.user.findUnique({ where: { username: 'demo.gestor' } })) {
     await addLocations();
+    await addStock();
     console.log(
       'Demonstração organizacional atualizada sem recriar contas ou chamados existentes.',
     );
@@ -184,9 +185,81 @@ async function main() {
     });
   }
   await addLocations();
+  await addStock();
   console.log(
     'Demonstração criada em banco separado: 54 chamados, 4 técnicos (1 inativo), 3 funcionários e 1 gestor. Senha: DEMO_PASSWORD do .env.demo; troca obrigatória.',
   );
+}
+async function addStock() {
+  const people = await db.user.findMany({
+    where: { organizationId, username: { in: ['demo.carlos', 'demo.eletricista'] } },
+  });
+  for (const person of people)
+    await db.user.update({ where: { id: person.id }, data: { stockKeeper: true } });
+  const technician = people.find((p) => p.username === 'demo.carlos')!;
+  const teams = await db.team.findMany({ where: { organizationId } });
+  const ti = teams.find((t) => t.key === 'TI')!,
+    electric = teams.find((t) => t.key === 'ELETRICA')!;
+  await db.$transaction(async (tx) => {
+    for (let n = 1; n <= 3; n++) {
+      const name = `Alicate ${n}`;
+      if (
+        await tx.stockItem.findUnique({ where: { organizationId_name: { organizationId, name } } })
+      )
+        continue;
+      const heldSince = n === 1 ? new Date() : null;
+      const item = await tx.stockItem.create({
+        data: {
+          organizationId,
+          teamId: electric.id,
+          name,
+          kind: 'FERRAMENTA',
+          holderId: n === 1 ? technician.id : null,
+          heldSince,
+        },
+      });
+      if (n === 1)
+        await tx.stockMovement.create({
+          data: {
+            organizationId,
+            itemId: item.id,
+            actorId: technician.id,
+            itemTeamId: electric.id,
+            actorTeamId: technician.teamId,
+            type: 'RETIRADA',
+          },
+        });
+    }
+    for (const [name, unit, balance, minimum] of [
+      ['Cabo flexível 2,5 mm', 'METRO', 2, 2],
+      ['Conector RJ45', 'UNIDADE', 50, 10],
+    ] as const) {
+      if (
+        await tx.stockItem.findUnique({ where: { organizationId_name: { organizationId, name } } })
+      )
+        continue;
+      const item = await tx.stockItem.create({
+        data: { organizationId, teamId: ti.id, name, kind: 'MATERIAL', unit, balance, minimum },
+      });
+      const movement = await tx.stockMovement.create({
+        data: {
+          organizationId,
+          itemId: item.id,
+          actorId: technician.id,
+          itemTeamId: ti.id,
+          actorTeamId: technician.teamId,
+          type: 'ENTRADA',
+          quantity: balance,
+          delta: balance,
+          balanceAfter: balance,
+        },
+      });
+      if (balance <= minimum)
+        await tx.stockAlert.create({
+          data: { organizationId, itemId: item.id, openedByMovementId: movement.id },
+        });
+    }
+  });
 }
 async function addLocations() {
   await db.organization.update({

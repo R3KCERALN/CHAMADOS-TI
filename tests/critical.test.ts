@@ -15,6 +15,7 @@ import {
 import * as service from '../src/lib/services';
 import { AppError } from '../src/lib/errors';
 import { ticketNumber } from '../src/lib/labels';
+import { stockActor, teamsWithoutStockKeeper } from '../src/lib/stock-access';
 import type { Role } from '../src/generated/prisma/client';
 const password = process.env.TEST_PASSWORD!;
 let admin: string,
@@ -929,4 +930,113 @@ test('quem era apoio e assume o chamado movido deixa de ser apoio, com evento', 
   assert.ok(
     !(await service.listTickets(eletricista, 'apoio')).tickets.some((t) => t.id === ticket.id),
   );
+});
+test('ADMIN marca técnico como responsável de estoque com auditoria; outros papéis não recebem a marca', async () => {
+  const technician = await makeUser('TI');
+  const form = (stockKeeper: boolean | undefined, role: Role = 'TI') => ({
+    name: technician.name,
+    username: technician.username,
+    primaryCompanyId,
+    departmentId,
+    role,
+    ...(role === 'TI' && { teamId: tiTeam }),
+    active: true,
+    ...(stockKeeper !== undefined && { stockKeeper }),
+  });
+  const audits = () =>
+    db.userAudit.findMany({
+      where: { subjectId: technician.id, action: 'RESPONSAVEL_ESTOQUE_ALTERADO' },
+      orderBy: { createdAt: 'asc' },
+    });
+  const flag = async () =>
+    (await db.user.findUniqueOrThrow({ where: { id: technician.id } })).stockKeeper;
+  await service.updateUser(admin, technician.id, form(false));
+  assert.equal(await flag(), false);
+  assert.equal((await audits()).length, 0);
+  await service.updateUser(admin, technician.id, form(true));
+  assert.equal(await flag(), true);
+  let rows = await audits();
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].actorId, admin);
+  assert.deepEqual(rows[0].metadata, { stockKeeper: true });
+  await service.updateUser(admin, technician.id, form(true));
+  assert.equal((await audits()).length, 1);
+  await service.updateUser(admin, technician.id, form(false));
+  assert.equal(await flag(), false);
+  rows = await audits();
+  assert.equal(rows.length, 2);
+  assert.deepEqual(rows[1].metadata, { stockKeeper: false });
+  await service.updateUser(admin, technician.id, form(true));
+  await service.updateUser(admin, technician.id, form(true, 'FUNCIONARIO'));
+  assert.equal(await flag(), false);
+  rows = await audits();
+  assert.equal(rows.length, 4);
+  assert.deepEqual(rows[3].metadata, { stockKeeper: false });
+  const created = await service.createUser(admin, {
+    name: 'Gestora sem estoque',
+    username: `gestor.${randomBytes(4).toString('hex')}`,
+    primaryCompanyId,
+    departmentId,
+    role: 'GESTOR',
+    stockKeeper: true,
+    password,
+  });
+  assert.equal((await db.user.findUniqueOrThrow({ where: { id: created.id } })).stockKeeper, false);
+  const keeper = await service.createUser(admin, {
+    name: 'Técnico responsável',
+    username: `resp.${randomBytes(4).toString('hex')}`,
+    primaryCompanyId,
+    departmentId,
+    role: 'TI',
+    teamId: tiTeam,
+    stockKeeper: true,
+    password,
+  });
+  assert.equal((await db.user.findUniqueOrThrow({ where: { id: keeper.id } })).stockKeeper, true);
+});
+test('aviso de equipe sem responsável de estoque', async () => {
+  const org = await db.organization.create({
+    data: { name: 'Org de estoque ' + randomBytes(4).toString('hex') },
+  });
+  const dept = await db.department.create({ data: { organizationId: org.id, name: 'Setor' } });
+  const company = await db.company.create({
+    data: { organizationId: org.id, displayName: 'Local', cnpj: syntheticCnpj() },
+  });
+  const orgAdmin = await makeUser('ADMIN', {
+    organizationId: org.id,
+    departmentId: dept.id,
+    primaryCompanyId: company.id,
+  });
+  const orgTech = await makeUser('TI', {
+    organizationId: org.id,
+    departmentId: dept.id,
+    primaryCompanyId: company.id,
+    teamId: await teamId(org.id, 'TI'),
+  });
+  const names = async () => (await teamsWithoutStockKeeper(org.id)).map((t) => t.name).sort();
+  assert.deepEqual(await names(), ['Elétrica', 'TI']);
+  await service.updateUser(orgAdmin.id, orgTech.id, {
+    name: orgTech.name,
+    username: orgTech.username,
+    primaryCompanyId: company.id,
+    departmentId: dept.id,
+    role: 'TI',
+    teamId: orgTech.teamId,
+    active: true,
+    stockKeeper: true,
+  });
+  assert.deepEqual(await names(), ['Elétrica']);
+  await db.user.update({ where: { id: orgTech.id }, data: { active: false } });
+  assert.deepEqual(await names(), ['Elétrica', 'TI']);
+});
+test('stockActor aplica papéis e a marca de responsável', async () => {
+  const keeperTech = await makeUser('TI', { stockKeeper: true });
+  assert.equal((await stockActor(db, keeperTech.id, 'keep')).keeper, true);
+  assert.equal((await stockActor(db, admin, 'keep')).keeper, true);
+  await assert.rejects(stockActor(db, tech, 'keep'), { status: 403 });
+  await assert.rejects(stockActor(db, manager, 'operate'), { status: 403 });
+  await assert.rejects(stockActor(db, tech, 'review'), { status: 403 });
+  await assert.rejects(stockActor(db, employee, 'view'), { status: 404 });
+  assert.equal((await stockActor(db, manager, 'view')).keeper, false);
+  assert.equal((await stockActor(db, manager, 'review')).role, 'GESTOR');
 });

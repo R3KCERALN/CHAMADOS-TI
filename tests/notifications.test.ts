@@ -455,3 +455,105 @@ test('retorno do login aceita somente chamado local, sem open redirect', () => {
   ])
     assert.equal(ticketReturnTo(path), '/');
 });
+
+test('queda ao mínimo enfileira um aviso para técnicos das duas equipes, gestor e ADMIN, sem o autor e sem funcionário', async () => {
+  const { randomUUID } = await import('node:crypto');
+  const stock = await import('../src/lib/stock-service');
+  const ids = [
+    await person('TI'),
+    await person('TI', org, department, 'ELETRICA'),
+    await person('GESTOR'),
+    await person('ADMIN'),
+    await person('FUNCIONARIO'),
+  ];
+  const subs = await Promise.all(ids.map(subscribe));
+  const { item } = await stock.createItem(ids[3], {
+    kind: 'MATERIAL',
+    name: 'Cabo push ' + randomUUID(),
+    teamId: tiTeam,
+    unit: 'METRO',
+    minimum: '2',
+    initialQuantity: '3',
+    requestId: randomUUID(),
+  });
+  await stock.adjustCount(ids[3], item.id, {
+    counted: '2',
+    reason: 'Contagem física',
+    requestId: randomUUID(),
+  });
+  const alert = await db.stockAlert.findFirstOrThrow({ where: { itemId: item.id } });
+  const jobs = await db.pushDelivery.findMany({
+    where: { stockAlertId: alert.id },
+    include: { subscription: true },
+  });
+  for (let i = 0; i < ids.length; i++)
+    assert.equal(
+      jobs.some((j) => j.subscriptionId === subs[i].id),
+      i < 3,
+    );
+  await stock.adjustCount(ids[3], item.id, {
+    counted: '1',
+    reason: 'Contagem física',
+    requestId: randomUUID(),
+  });
+  assert.equal(await db.stockAlert.count({ where: { itemId: item.id } }), 1);
+  const sent: { title: string; body: string; url: string }[] = [];
+  for (let i = 0; i < 20; i++) {
+    if (
+      !(await dispatchPushBatch(async (_sub, payload) => {
+        sent.push(JSON.parse(payload));
+      }))
+    )
+      break;
+  }
+  const payloads = sent.filter((p) => p.title === 'Material acabando' && p.body === item.name);
+  assert.ok(payloads.length >= 3);
+  assert.ok(
+    payloads.every(
+      (p) => p.url === '/estoque?aba=acabando' && !JSON.stringify(p).includes('Push TI'),
+    ),
+  );
+  const ticket = await open();
+  assert.ok(!(await recipients(ticket.id, 'CRIADO')).includes(ids[2]));
+  const results = await Promise.allSettled([
+    stock.markReplenishmentRequested(ids[0], alert.id),
+    stock.markReplenishmentRequested(ids[2], alert.id),
+  ]);
+  assert.equal(results.filter((r) => r.status === 'fulfilled').length, 1);
+  const requested = await db.stockAlert.findUniqueOrThrow({ where: { id: alert.id } });
+  assert.ok(requested.requestedAt);
+  assert.ok(requested.requestedById);
+});
+test('entrada ou desativação antes do envio cancela o aviso pendente', async () => {
+  const { randomUUID } = await import('node:crypto');
+  const stock = await import('../src/lib/stock-service');
+  const author = await person('ADMIN'),
+    recipient = await person('TI');
+  const sub = await subscribe(recipient);
+  for (const disable of [false, true]) {
+    const { item } = await stock.createItem(author, {
+      kind: 'MATERIAL',
+      name: 'Cancelamento ' + randomUUID(),
+      teamId: tiTeam,
+      unit: 'METRO',
+      minimum: '2',
+      requestId: randomUUID(),
+    });
+    const alert = await db.stockAlert.findFirstOrThrow({ where: { itemId: item.id } });
+    assert.equal(
+      await db.pushDelivery.count({ where: { stockAlertId: alert.id, subscriptionId: sub.id } }),
+      1,
+    );
+    if (disable) await stock.deactivateItem(author, item.id, 'Fora de linha');
+    else await stock.addEntry(author, item.id, { quantity: '5', requestId: randomUUID() });
+    for (let i = 0; i < 20; i++) if (!(await dispatchPushBatch(async () => {}))) break;
+    assert.equal(
+      (
+        await db.pushDelivery.findFirstOrThrow({
+          where: { stockAlertId: alert.id, subscriptionId: sub.id },
+        })
+      ).status,
+      'CANCELLED',
+    );
+  }
+});

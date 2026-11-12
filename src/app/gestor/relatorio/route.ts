@@ -1,3 +1,4 @@
+import { stockFilters } from '@/lib/stock-analytics';
 import { cookies } from 'next/headers';
 import { getSessionUser } from '@/lib/auth-service';
 import { SESSION_COOKIE } from '@/lib/auth';
@@ -18,7 +19,8 @@ export async function GET(request: Request) {
   if (!pdfScreens.includes(screen)) return new Response('Relatório inválido.', { status: 400 });
   const now = new Date();
   try {
-    analyticsFilters(input, now);
+    if (screen === 'estoque') stockFilters(input, now);
+    else analyticsFilters(input, now);
   } catch {
     return new Response('Filtros inválidos.', { status: 400 });
   }

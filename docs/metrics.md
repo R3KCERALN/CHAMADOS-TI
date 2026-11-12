@@ -124,3 +124,13 @@ O sistema tem duas equipes técnicas (TI e Elétrica). Cada chamado pertence a u
 - **Primeira resposta** é o primeiro ASSUMIDO do chamado, seja qual for a equipe de quem assumiu; mover o chamado não a redefine.
 - **Tela Equipe:** o filtro recorta os **chamados**, não as pessoas. Aparecem os técnicos ativos da equipe filtrada e quem tem participação (principal, apoio ou carteira) nos chamados filtrados, inclusive técnicos de outra equipe que apoiaram. Sem filtro, vale a regra anterior.
 - **Histórico:** quem mudou de equipe segue a equipe de cada chamado; a atual do cadastro não reescreve chamados antigos. A participação principal da pessoa que tinha o chamado termina na mudança de equipe (evento `EQUIPE_ALTERADA`): o chamado volta sem responsável e não conta como responsabilidade dela nos períodos seguintes, mas o período da mudança continua contando.
+
+## Estoque
+
+O estoque é único por organização. As três coortes são independentes:
+
+- **Consumo:** soma de usos em chamado e fora de chamado no período, excluindo movimentos com estorno (mesmo quando o estorno ocorre depois do período). Agrupa pela equipe do item registrada no movimento; o filtro de equipe de quem usou usa o snapshot `actorTeamId`. Entradas e ajustes de contagem não são consumo.
+- **Usos fora de chamado:** movimentos no período, incluindo os estornados, pelo estado atual da conferência (última sequência); os totais por estado não dependem da paginação. O histórico permanece quando a foto expira.
+- **Ferramentas fora do lugar:** ferramentas ativas atualmente com alguém, pela equipe atual do item, em ordem da retirada mais antiga. O tempo corrido usa um único instante de consulta. Período e equipe de quem usou não restringem esta coorte atual.
+
+CSV exporta todos os movimentos do período e seus snapshots de equipe, em transação repeatable-read e páginas de 500, com proteção contra fórmulas. O PDF usa os mesmos filtros e consultas, com limite explícito de 2.000 linhas por tabela e indicação de usar o CSV quando houver corte.

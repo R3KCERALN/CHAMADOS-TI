@@ -11,6 +11,8 @@ import { requireActionUser, SESSION_COOKIE } from '@/lib/auth';
 import { login, logout, changePassword } from '@/lib/auth-service';
 import * as service from '@/lib/services';
 import { saveCompany, saveUnit } from '@/lib/organization-service';
+import { reviewAuthorization } from '@/lib/stock-review';
+import * as stock from '@/lib/stock-service';
 export type FormState = {
   error?: string;
   success?: string;
@@ -113,6 +115,7 @@ function userFields(form: FormData) {
     departmentId: value(form, 'departmentId'),
     role: value(form, 'role'),
     teamId: value(form, 'teamId') || null,
+    stockKeeper: form.get('stockKeeper') === 'on',
     primaryCompanyId: value(form, 'primaryCompanyId') || null,
     primaryUnitId: value(form, 'primaryUnitId') || null,
     additionalCompanyIds: form.getAll('additionalCompanyIds').map(String),
@@ -234,6 +237,97 @@ export async function ticketAction(_: FormState, form: FormData): Promise<FormSt
   }
   // The old team usually loses access to the ticket after the move.
   redirect('/chamados?movida=1');
+}
+export async function stockAction(_: FormState, form: FormData): Promise<FormState> {
+  try {
+    await sameOrigin();
+    const user = await requireActionUser();
+    const itemId = value(form, 'itemId');
+    const item = {
+      name: value(form, 'name'),
+      teamId: value(form, 'teamId'),
+      unit: value(form, 'unit') || null,
+      minimum: value(form, 'minimum') || null,
+    };
+    let success: string;
+    switch (value(form, 'intent')) {
+      case 'criar':
+        await stock.createItem(user.id, {
+          ...item,
+          kind: value(form, 'kind'),
+          initialQuantity: value(form, 'initialQuantity') || null,
+          requestId: value(form, 'requestId'),
+        });
+        success = 'Item cadastrado.';
+        break;
+      case 'editar':
+        await stock.updateItem(user.id, itemId, item);
+        success = 'Cadastro atualizado.';
+        break;
+      case 'entrada':
+        await stock.addEntry(user.id, itemId, {
+          quantity: value(form, 'quantity'),
+          note: value(form, 'note') || null,
+          requestId: value(form, 'requestId'),
+        });
+        success = 'Entrada registrada.';
+        break;
+      case 'ajuste':
+        await stock.adjustCount(user.id, itemId, {
+          counted: value(form, 'counted'),
+          reason: value(form, 'reason'),
+          requestId: value(form, 'requestId'),
+        });
+        success = 'Contagem registrada.';
+        break;
+      case 'pedido-feito':
+        await stock.markReplenishmentRequested(user.id, value(form, 'alertId'));
+        success = 'Pedido registrado.';
+        break;
+      case 'conferir':
+        await reviewAuthorization(user.id, value(form, 'movementId'), {
+          outcome: value(form, 'outcome') as import('@/generated/prisma/client').StockReviewOutcome,
+          note: value(form, 'note'),
+        });
+        success = 'Conferência registrada.';
+        break;
+      case 'uso-chamado':
+        await stock.recordTicketUse(user.id, value(form, 'ticketId'), {
+          itemId,
+          quantity: value(form, 'quantity'),
+          requestId: value(form, 'requestId'),
+        });
+        revalidatePath(`/chamados/${value(form, 'ticketId')}`);
+        success = 'Material registrado.';
+        break;
+      case 'estornar':
+        await stock.reverseMovement(user.id, value(form, 'movementId'), {
+          reason: value(form, 'reason'),
+          requestId: value(form, 'requestId'),
+        });
+        revalidatePath('/chamados', 'layout');
+        success = 'Lançamento estornado.';
+        break;
+      case 'pegar':
+        await stock.takeTool(user.id, itemId, { requestId: value(form, 'requestId') });
+        success = 'Ferramenta registrada com você.';
+        break;
+      case 'devolver':
+        await stock.returnTool(user.id, itemId, { requestId: value(form, 'requestId') });
+        success = 'Ferramenta devolvida.';
+        break;
+      case 'desativar':
+        await stock.deactivateItem(user.id, itemId, value(form, 'reason'));
+        success = 'Item desativado.';
+        break;
+      default:
+        throw new AppError('Operação inválida.');
+    }
+    revalidatePath('/estoque', 'layout');
+    return { success };
+  } catch (error) {
+    return failure(error);
+  }
 }
 export async function categoryAction(_: FormState, form: FormData): Promise<FormState> {
   try {

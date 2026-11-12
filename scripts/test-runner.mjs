@@ -20,6 +20,7 @@ const env = {
   VAPID_PRIVATE_KEY: vapid.privateKey,
   VAPID_SUBJECT: 'https://support.example.invalid',
   PUSH_WORKER_ENABLED: 'false',
+  STOCK_MAINTENANCE_ENABLED: 'false',
   DATABASE_URL: testUrl.toString(),
   APP_URL: 'http://localhost:3100',
   COOKIE_SECURE: 'false',

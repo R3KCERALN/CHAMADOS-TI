@@ -5,7 +5,7 @@ import { db } from '@/lib/db';
 import { AppError } from '@/lib/errors';
 export async function GET() {
   try {
-    const { user, token } = await operationalSession();
+    const { user, token } = await operationalSession({ allowManager: true });
     const devices = await db.pushSubscription.findMany({
       where: {
         userId: user.id,
@@ -32,7 +32,7 @@ export async function GET() {
 async function mutate(request: Request, remove: boolean) {
   try {
     verifyOrigin(request.headers.get('origin'));
-    const { user, token } = await operationalSession();
+    const { user, token } = await operationalSession({ allowManager: true });
     if (!remove && !pushConfig()) throw new AppError('Notificações ainda não configuradas.', 503);
     if (!request.headers.get('content-type')?.startsWith('application/json'))
       throw new AppError('Envie JSON.');

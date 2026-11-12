@@ -6,7 +6,12 @@
 	encode zstd gzip
 	header Strict-Transport-Security "max-age=31536000"
 	header -Server
-	request_body {
+	@stock_upload path /api/estoque/uso-avulso
+	@other_requests not path /api/estoque/uso-avulso
+	request_body @stock_upload {
+		max_size 6MB
+	}
+	request_body @other_requests {
 		max_size 256KB
 	}
 	# O app não usa next/image; fecha a superfície do otimizador de imagens.

@@ -26,7 +26,7 @@ export async function saveSubscription(userId: string, token: string, input: unk
   }
   return db.$transaction(async (tx) => {
     await tx.$queryRaw`SELECT id FROM "User" WHERE id=${userId} FOR UPDATE`;
-    const user = await actor(tx, userId, ['TI', 'ADMIN', 'FUNCIONARIO']);
+    const user = await actor(tx, userId, ['TI', 'ADMIN', 'FUNCIONARIO', 'GESTOR']);
     const sessionHash = sessionDigest(token);
     if (
       !(await tx.session.findFirst({
@@ -69,7 +69,7 @@ export async function removeSubscription(userId: string, input: unknown) {
     .object({ endpoint: z.string().max(2048) })
     .strict()
     .parse(input);
-  const user = await actor(db, userId, ['TI', 'ADMIN', 'FUNCIONARIO']);
+  const user = await actor(db, userId, ['TI', 'ADMIN', 'FUNCIONARIO', 'GESTOR']);
   await db.pushSubscription.deleteMany({
     where: { userId, organizationId: user.organizationId, endpointHash: sessionDigest(endpoint) },
   });
